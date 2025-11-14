@@ -40,7 +40,6 @@ env/
 .coverage
 .pytest_cache/
 htmlcov/
-tests/
 
 # Shannon CLI specific
 .shannon-analysis-checkpoint.json
