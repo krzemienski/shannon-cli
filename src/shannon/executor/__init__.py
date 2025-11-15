@@ -52,6 +52,7 @@ from .models import (
 from .library_discoverer import LibraryDiscoverer
 from .validator import ValidationOrchestrator
 from .git_manager import GitManager
+from .simple_executor import SimpleTaskExecutor
 
 __all__ = [
     # Prompts
@@ -61,13 +62,14 @@ __all__ = [
     'get_combined_core_instructions',
     'get_enhancement_for_project',
     'get_all_project_types',
-    
+
     # Components
     'PromptEnhancer',
     'LibraryDiscoverer',
     'ValidationOrchestrator',
     'GitManager',
-    
+    'SimpleTaskExecutor',
+
     # Models
     'LibraryRecommendation',
     'ValidationCriteria',

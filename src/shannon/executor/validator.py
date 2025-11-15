@@ -37,27 +37,27 @@ class TestConfig:
 class ValidationOrchestrator:
     """
     Orchestrates 3-tier validation using existing test infrastructure
-    
+
     Auto-detects how to validate based on project files.
-    
+
     Usage:
         validator = ValidationOrchestrator(project_root=Path("/path"))
-        
+
         result = await validator.validate_all_tiers(
             changes=change_set,
             criteria=validation_criteria
         )
-        
+
         if result.all_passed:
             # Safe to commit
         else:
             # Fix and retry
     """
-    
+
     def __init__(self, project_root: Path, logger: Optional[logging.Logger] = None):
         """
         Initialize validation orchestrator
-        
+
         Args:
             project_root: Project directory
             logger: Optional logger
@@ -65,20 +65,20 @@ class ValidationOrchestrator:
         self.project_root = project_root
         self.logger = logger or logging.getLogger(__name__)
         self.test_config = self._auto_detect_tests()
-        
+
         self.logger.info(f"ValidationOrchestrator initialized for {self.test_config.project_type}")
-    
+
     def _auto_detect_tests(self) -> TestConfig:
         """
         Auto-detect test commands from project files
-        
+
         Checks:
         - package.json (for npm scripts)
         - pyproject.toml / pytest.ini (for Python)
         - *.xcodeproj (for iOS)
         - build.gradle / pom.xml (for Java)
         - Cargo.toml (for Rust)
-        
+
         Returns:
             TestConfig with detected commands
         """
@@ -88,7 +88,7 @@ class ValidationOrchestrator:
             try:
                 data = json.loads(package_json.read_text())
                 scripts = data.get('scripts', {})
-                
+
                 return TestConfig(
                     project_type='nodejs',
                     build_cmd=scripts.get('build'),
@@ -100,7 +100,7 @@ class ValidationOrchestrator:
                 )
             except:
                 pass
-        
+
         # Check for Python
         if (self.project_root / 'pyproject.toml').exists() or \
            (self.project_root / 'pytest.ini').exists() or \
@@ -114,7 +114,7 @@ class ValidationOrchestrator:
                 e2e_cmd=None,
                 start_cmd=self._detect_python_start_cmd()
             )
-        
+
         # Check for iOS
         if list(self.project_root.glob('*.xcodeproj')):
             return TestConfig(
@@ -126,7 +126,7 @@ class ValidationOrchestrator:
                 e2e_cmd=None,
                 start_cmd=None  # iOS apps don't have "start" command
             )
-        
+
         # Check for Rust
         if (self.project_root / 'Cargo.toml').exists():
             return TestConfig(
@@ -138,7 +138,7 @@ class ValidationOrchestrator:
                 e2e_cmd=None,
                 start_cmd='cargo run'
             )
-        
+
         # Check for Java/Android
         if (self.project_root / 'build.gradle').exists():
             return TestConfig(
@@ -150,7 +150,7 @@ class ValidationOrchestrator:
                 e2e_cmd=None,
                 start_cmd='./gradlew run'
             )
-        
+
         # Unknown - minimal config
         return TestConfig(
             project_type='unknown',
@@ -161,26 +161,26 @@ class ValidationOrchestrator:
             e2e_cmd=None,
             start_cmd=None
         )
-    
+
     def _detect_python_start_cmd(self) -> Optional[str]:
         """Detect how to start Python app"""
         # Check for FastAPI
         main_py = self.project_root / 'main.py'
         if main_py.exists() and 'fastapi' in main_py.read_text().lower():
             return 'uvicorn main:app --reload'
-        
+
         # Check for Django
         manage_py = self.project_root / 'manage.py'
         if manage_py.exists():
             return 'python manage.py runserver'
-        
+
         # Check for Flask
         app_py = self.project_root / 'app.py'
         if app_py.exists() and 'flask' in app_py.read_text().lower():
             return 'python app.py'
-        
+
         return None
-    
+
     async def validate_all_tiers(
         self,
         changes: Any,  # ChangeSet from execution
@@ -188,21 +188,21 @@ class ValidationOrchestrator:
     ) -> ValidationResult:
         """
         Run all 3 tiers of validation
-        
+
         Args:
             changes: Changes made (files modified)
             criteria: Optional validation criteria
-            
+
         Returns:
             ValidationResult with all tier results
         """
         import time
         start_time = time.time()
-        
+
         # Tier 1: Static
         self.logger.info("Running Tier 1 validation (static)...")
         tier1 = await self.validate_tier1()
-        
+
         if not tier1['passed']:
             self.logger.warning("Tier 1 failed, skipping Tier 2+3")
             return ValidationResult(
@@ -213,11 +213,11 @@ class ValidationOrchestrator:
                 failures=tier1.get('failures', []),
                 duration_seconds=time.time() - start_time
             )
-        
+
         # Tier 2: Tests
         self.logger.info("Running Tier 2 validation (tests)...")
         tier2 = await self.validate_tier2()
-        
+
         if not tier2['passed']:
             self.logger.warning("Tier 2 failed, skipping Tier 3")
             return ValidationResult(
@@ -229,11 +229,11 @@ class ValidationOrchestrator:
                 failures=tier2.get('failures', []),
                 duration_seconds=time.time() - start_time
             )
-        
+
         # Tier 3: Functional
         self.logger.info("Running Tier 3 validation (functional)...")
         tier3 = await self.validate_tier3(criteria)
-        
+
         return ValidationResult(
             tier1_passed=True,
             tier2_passed=True,
@@ -244,11 +244,11 @@ class ValidationOrchestrator:
             failures=tier3.get('failures', []),
             duration_seconds=time.time() - start_time
         )
-    
+
     async def validate_tier1(self) -> Dict[str, Any]:
         """Tier 1: Static validation (build, lint, types)"""
         results = {'passed': True, 'checks': {}, 'failures': []}
-        
+
         # Build check
         if self.test_config.build_cmd:
             build_passed = await self._run_check(self.test_config.build_cmd, "Build")
@@ -256,7 +256,7 @@ class ValidationOrchestrator:
             if not build_passed:
                 results['passed'] = False
                 results['failures'].append("Build failed")
-        
+
         # Type check
         if self.test_config.type_check_cmd:
             type_passed = await self._run_check(self.test_config.type_check_cmd, "Type check")
@@ -264,7 +264,7 @@ class ValidationOrchestrator:
             if not type_passed:
                 results['passed'] = False
                 results['failures'].append("Type check failed")
-        
+
         # Lint check
         if self.test_config.lint_cmd:
             lint_passed = await self._run_check(self.test_config.lint_cmd, "Lint")
@@ -272,27 +272,27 @@ class ValidationOrchestrator:
             if not lint_passed:
                 results['passed'] = False
                 results['failures'].append("Lint failed")
-        
+
         return results
-    
+
     async def validate_tier2(self) -> Dict[str, Any]:
         """Tier 2: Unit/Integration tests"""
         if not self.test_config.test_cmd:
             return {'passed': True, 'skipped': True, 'reason': 'No test command configured'}
-        
+
         test_passed = await self._run_check(self.test_config.test_cmd, "Tests")
-        
+
         return {
             'passed': test_passed,
             'checks': {'tests': test_passed},
             'failures': [] if test_passed else ["Tests failed"]
         }
-    
+
     async def validate_tier3(self, criteria: Optional[Any] = None) -> Dict[str, Any]:
         """Tier 3: Functional validation from user perspective"""
         # For now, simplified implementation
         # Full implementation would start app, test features, etc.
-        
+
         if self.test_config.e2e_cmd:
             e2e_passed = await self._run_check(self.test_config.e2e_cmd, "E2E tests")
             return {
@@ -300,30 +300,61 @@ class ValidationOrchestrator:
                 'checks': {'e2e': e2e_passed},
                 'failures': [] if e2e_passed else ["E2E tests failed"]
             }
-        
+
         # No E2E configured - pass by default
         # (Real implementation would have more sophisticated functional testing)
         return {'passed': True, 'skipped': True, 'reason': 'No E2E tests configured'}
-    
+
     async def _run_check(self, command: str, check_name: str) -> bool:
         """
         Run a validation check command
-        
+
         Args:
             command: Shell command to run
             check_name: Name for logging
-            
+
         Returns:
             True if command succeeded (exit code 0)
         """
         self.logger.debug(f"Running {check_name}: {command}")
-        
-        # TODO: Actually run the command via run_terminal_cmd
-        # For now, return True (will be implemented when integrated with SDK)
-        
-        # Real implementation would be:
-        # result = await run_terminal_cmd(command, cwd=self.project_root)
-        # return result.exit_code == 0
-        
-        return True  # Placeholder
+
+        # Execute command via subprocess
+        import subprocess
+        import asyncio
+
+        try:
+            # Run command in project directory
+            process = await asyncio.create_subprocess_shell(
+                command,
+                cwd=self.project_root,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+
+            # Wait for completion (5 min timeout)
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(),
+                    timeout=300
+                )
+            except asyncio.TimeoutError:
+                process.kill()
+                self.logger.error(f"{check_name} timed out after 5 minutes")
+                return False
+
+            # Check exit code
+            success = process.returncode == 0
+
+            if success:
+                self.logger.info(f"{check_name}: PASS")
+            else:
+                self.logger.warning(f"{check_name}: FAIL (exit code {process.returncode})")
+                if stderr:
+                    self.logger.debug(f"  Error: {stderr.decode()[:200]}")
+
+            return success
+
+        except Exception as e:
+            self.logger.error(f"{check_name} failed with exception: {e}")
+            return False
 

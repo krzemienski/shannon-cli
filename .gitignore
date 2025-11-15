@@ -45,3 +45,19 @@ tests/
 # Shannon CLI specific
 .shannon-analysis-checkpoint.json
 *.log
+
+# Shannon specific
+.shannon_cache/
+*.bak
+*.bak2
+*.bak3
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# OS
+.DS_Store
+

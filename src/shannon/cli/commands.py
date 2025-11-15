@@ -1105,6 +1105,214 @@ def task(
 
 
 @cli.command()
+@require_framework()
+@click.argument('task')
+@click.option('--dry-run', is_flag=True, help='Plan only, do not execute')
+@click.option('--interactive', '-i', is_flag=True, help='Confirm before each step')
+@click.option('--max-iterations', type=int, default=3, help='Max retry attempts per step')
+@click.option('--research/--no-research', default=True, help='Enable research integration')
+@click.option('--auto-commit/--no-auto-commit', default=True, help='Auto-commit validated changes')
+@click.option('--session-id', help='Session ID (auto-generated if not provided)')
+@click.option('--verbose', '-v', is_flag=True, help='Verbose output')
+def exec(
+    task: str,
+    dry_run: bool,
+    interactive: bool,
+    max_iterations: int,
+    research: bool,
+    auto_commit: bool,
+    session_id: Optional[str],
+    verbose: bool
+) -> None:
+    """
+    Execute autonomous task with library discovery and validation.
+    
+    Shannon V3.5 autonomous executor: Takes natural language task,
+    discovers relevant libraries, validates functionally, and commits
+    atomically to git.
+    
+    \b
+    Process:
+        1. Auto-prime codebase context (task-focused)
+        2. Research and discover libraries (don't reinvent wheel)
+        3. Plan execution with validation strategy
+        4. Execute with iteration (retry on failure)
+        5. Validate functionally (3-tier: static, unit, functional)
+        6. Commit atomically (only if validated)
+    
+    \b
+    Example:
+        shannon exec "fix the iOS offscreen login bug"
+        shannon exec "add authentication to React app"
+        shannon exec "optimize database query performance"
+        shannon exec "add dark mode toggle" --dry-run
+        shannon exec "implement OAuth2" --research
+    
+    \b
+    Features:
+        - Library discovery (searches npm, PyPI, CocoaPods, etc.)
+        - 3-tier validation (build + tests + functional)
+        - Atomic git commits per validated step
+        - Iterative refinement (up to 3 attempts per step)
+        - Enhanced system prompts (library-first, validation-focused)
+        - V3.1 dashboard for real-time visibility
+    
+    \b
+    Note: V3.5 exec is currently in PREVIEW. Full implementation requires
+          Shannon Framework /shannon:exec skill integration.
+    """
+    async def run_exec() -> None:
+        """Execute autonomous task workflow"""
+        from pathlib import Path
+        
+        ui = ProgressUI()
+        config = ShannonConfig()
+        
+        # Display header
+        ui.console.print()
+        ui.console.print("[bold cyan]═══════════════════════════════════════════════════════════════[/bold cyan]")
+        ui.console.print("[bold cyan] Shannon V3.5 Autonomous Executor (PREVIEW)[/bold cyan]")
+        ui.console.print("[bold cyan]═══════════════════════════════════════════════════════════════[/bold cyan]")
+        ui.console.print()
+        ui.console.print(f"[bold]Task:[/bold] {task}")
+        ui.console.print()
+        
+        try:
+            # Step 1: Build enhanced system prompts
+            ui.console.print("[cyan]Phase 1:[/cyan] Building enhanced system prompts...")
+            
+            from shannon.executor import PromptEnhancer
+            
+            enhancer = PromptEnhancer()
+            enhancements = enhancer.build_enhancements(
+                task=task,
+                project_root=Path.cwd()
+            )
+            
+            ui.console.print(f"  ✓ Enhanced prompts built ({len(enhancements)} chars)")
+            ui.console.print(f"    - Library discovery instructions")
+            ui.console.print(f"    - Functional validation requirements")
+            ui.console.print(f"    - Git workflow automation")
+            ui.console.print()
+            
+            # Step 2: Detect project context
+            ui.console.print("[cyan]Phase 2:[/cyan] Detecting project context...")
+            
+            project_type = enhancer._detect_project_type(Path.cwd())
+            ui.console.print(f"  ✓ Project type: {project_type}")
+            ui.console.print()
+            
+            # Step 3: Library discovery (preview)
+            ui.console.print("[cyan]Phase 3:[/cyan] Library discovery...")
+            
+            from shannon.executor import LibraryDiscoverer
+            
+            discoverer = LibraryDiscoverer(Path.cwd())
+            ui.console.print(f"  ✓ Library discoverer initialized")
+            ui.console.print(f"    - Language: {discoverer.language}")
+            ui.console.print(f"    - Package manager: {discoverer._get_package_manager()}")
+            ui.console.print()
+            
+            # Step 4: Validation setup
+            ui.console.print("[cyan]Phase 4:[/cyan] Configuring validation...")
+            
+            from shannon.executor import ValidationOrchestrator
+            
+            validator = ValidationOrchestrator(Path.cwd())
+            ui.console.print(f"  ✓ Validation orchestrator initialized")
+            if validator.test_config.build_cmd:
+                ui.console.print(f"    - Build: {validator.test_config.build_cmd}")
+            if validator.test_config.test_cmd:
+                ui.console.print(f"    - Tests: {validator.test_config.test_cmd}")
+            if validator.test_config.lint_cmd:
+                ui.console.print(f"    - Lint: {validator.test_config.lint_cmd}")
+            ui.console.print()
+            
+            # Step 5: Git manager setup
+            ui.console.print("[cyan]Phase 5:[/cyan] Git workflow setup...")
+            
+            from shannon.executor import GitManager
+            
+            git_mgr = GitManager(Path.cwd())
+            branch_name = git_mgr._generate_branch_name(task)
+            ui.console.print(f"  ✓ Git manager initialized")
+            ui.console.print(f"    - Branch would be: {branch_name}")
+            ui.console.print()
+            
+            # Phase 6: Simple execution
+            ui.console.print("[cyan]Phase 6:[/cyan] Task execution...")
+            ui.console.print()
+            
+            if dry_run:
+                ui.console.print("[yellow]═══════════════════════════════════════════════════════════════[/yellow]")
+                ui.console.print("[yellow] DRY RUN MODE - No execution performed[/yellow]")
+                ui.console.print("[yellow]═══════════════════════════════════════════════════════════════[/yellow]")
+                ui.console.print()
+                ui.console.print("[bold]Execution Plan:[/bold]")
+                ui.console.print()
+                ui.console.print(f"  1. Create branch: {branch_name}")
+                ui.console.print(f"  2. Discover libraries: {len(libraries) if libraries else 0} found")
+                ui.console.print(f"  3. Execute with enhanced prompts ({len(enhancements)} chars)")
+                ui.console.print(f"  4. Validate (3 tiers)")
+                ui.console.print(f"  5. Commit if validated")
+                ui.console.print()
+                
+                if libraries:
+                    ui.console.print("[bold]Recommended libraries:[/bold]")
+                    for lib in libraries[:3]:
+                        ui.console.print(f"  • {lib.name} - {lib.why_recommended}")
+                    ui.console.print()
+                
+                ui.success("Dry run complete")
+            else:
+                # Actually execute using SimpleTaskExecutor
+                ui.console.print("[bold cyan]Executing with SimpleTaskExecutor...[/bold cyan]")
+                ui.console.print()
+                
+                from shannon.executor.simple_executor import SimpleTaskExecutor
+                
+                executor = SimpleTaskExecutor(Path.cwd())
+                result = await executor.execute(task, auto_commit=auto_commit)
+                
+                ui.console.print()
+                ui.console.print("[yellow]═══════════════════════════════════════════════════════════════[/yellow]")
+                
+                if result.success:
+                    ui.console.print("[yellow] ✅ TASK EXECUTION COMPLETE[/yellow]")
+                    ui.console.print("[yellow]═══════════════════════════════════════════════════════════════[/yellow]")
+                    ui.console.print()
+                    ui.console.print(f"[bold]Task:[/bold] {result.task_description}")
+                    ui.console.print(f"[bold]Branch:[/bold] {result.branch_name}")
+                    ui.console.print(f"[bold]Steps:[/bold] {result.steps_completed}/{result.steps_total}")
+                    ui.console.print(f"[bold]Duration:[/bold] {result.duration_seconds:.1f}s")
+                    
+                    if result.libraries_used:
+                        ui.console.print(f"[bold]Libraries:[/bold] {', '.join(result.libraries_used)}")
+                    
+                    if result.commits_created:
+                        ui.console.print(f"[bold]Commits:[/bold] {len(result.commits_created)}")
+                    
+                    ui.console.print()
+                    ui.success("Task execution successful")
+                else:
+                    ui.console.print("[yellow] ❌ TASK EXECUTION FAILED[/yellow]")
+                    ui.console.print("[yellow]═══════════════════════════════════════════════════════════════[/yellow]")
+                    ui.console.print()
+                    ui.console.print(f"[bold]Error:[/bold] {result.error_message}")
+                    ui.console.print()
+                    ui.error("Task execution failed - see error above")
+            
+        except Exception as e:
+            ui.error(f"Exec failed: {e}")
+            if verbose:
+                import traceback
+                ui.console.print(traceback.format_exc())
+            sys.exit(1)
+    
+    anyio.run(run_exec)
+
+
+@cli.command()
 @click.argument('name', required=False)
 @click.option('--list', 'list_checkpoints', is_flag=True, help='List all checkpoints')
 @click.option('--session-id', help='Session ID (uses latest if not provided)')
