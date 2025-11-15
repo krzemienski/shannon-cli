@@ -64,7 +64,7 @@ class Layer1Renderer:
         lines.append(Text())  # Blank line
 
         # Agent summary (if wave execution)
-        if snapshot.session.current_wave is not None:
+        if snapshot.session.wave_number is not None:
             agent_line = self._render_agent_summary(snapshot)
             lines.append(agent_line)
             lines.append(Text())  # Blank line
@@ -99,14 +99,14 @@ class Layer1Renderer:
         """Render phase/wave information."""
         text = Text()
 
-        if snapshot.session.current_wave is not None:
+        if snapshot.session.wave_number is not None:
             # Wave execution
-            current = snapshot.session.current_wave
+            current = snapshot.session.wave_number
             total = snapshot.session.total_waves or 0
-            wave_name = snapshot.session.wave_name or "Unknown"
+            phase = snapshot.session.current_phase or "Unknown"
 
             text.append(f"Wave {current}/{total}: ", style="cyan")
-            text.append(wave_name, style="bold white")
+            text.append(phase, style="bold white")
         else:
             # Phase execution
             phase = snapshot.session.current_phase or "Unknown"
@@ -119,22 +119,17 @@ class Layer1Renderer:
         """Render progress bar."""
         text = Text()
 
-        completed = snapshot.session.tasks_completed
-        total = snapshot.session.tasks_total
+        progress = snapshot.session.overall_progress  # 0.0-1.0
 
-        if total > 0:
-            percentage = int((completed / total) * 100)
-            bar_width = 10
-            filled = int((completed / total) * bar_width)
-            empty = bar_width - filled
+        percentage = int(progress * 100)
+        bar_width = 10
+        filled = int(progress * bar_width)
+        empty = bar_width - filled
 
-            # Progress bar
-            text.append("▓" * filled, style="bold green")
-            text.append("░" * empty, style="dim white")
-            text.append(f" {percentage}% ", style="bold white")
-            text.append(f"({completed}/{total} tasks)", style="cyan")
-        else:
-            text.append("No tasks yet", style="dim white")
+        # Progress bar
+        text.append("▓" * filled, style="bold green")
+        text.append("░" * empty, style="dim white")
+        text.append(f" {percentage}%", style="bold white")
 
         return text
 
@@ -143,10 +138,10 @@ class Layer1Renderer:
         text = Text()
         text.append("Agents: ", style="bold white")
 
-        active = sum(1 for a in snapshot.agents if a.status == AgentState.ACTIVE)
-        complete = sum(1 for a in snapshot.agents if a.status == AgentState.COMPLETE)
-        waiting = sum(1 for a in snapshot.agents if a.status == AgentState.WAITING_API)
-        failed = sum(1 for a in snapshot.agents if a.status == AgentState.FAILED)
+        active = sum(1 for a in snapshot.agents if a.status == 'active')
+        complete = sum(1 for a in snapshot.agents if a.status == 'complete')
+        waiting = sum(1 for a in snapshot.agents if a.status == 'pending')
+        failed = sum(1 for a in snapshot.agents if a.status == 'failed')
 
         parts = []
         if active > 0:
@@ -170,7 +165,7 @@ class Layer1Renderer:
         text = Text()
 
         # Cost
-        cost = snapshot.session.total_cost
+        cost = snapshot.session.total_cost_usd
         text.append(f"${cost:.2f}", style="bold green")
         text.append(" | ", style="dim white")
 
@@ -183,7 +178,7 @@ class Layer1Renderer:
         text.append(" | ", style="dim white")
 
         # Duration
-        duration_sec = snapshot.session.duration_seconds
+        duration_sec = snapshot.session.elapsed_seconds
         if duration_sec >= 3600:
             hours = int(duration_sec // 3600)
             minutes = int((duration_sec % 3600) // 60)
@@ -209,22 +204,22 @@ class Layer1Renderer:
         # Find first non-complete agent
         active_agent = None
         for agent in snapshot.agents:
-            if agent.state != AgentState.COMPLETE:
+            if agent.status != 'complete':
                 active_agent = agent
                 break
 
         if active_agent:
-            if active_agent.status == AgentState.WAITING_API:
+            if active_agent.status == 'pending':
                 # Waiting for API
                 wait_time = active_agent.wait_duration_seconds or 0
                 text.append("⏳ ", style="yellow")
                 text.append(f"Waiting for Agent #{active_agent.agent_id}", style="bold yellow")
                 text.append(f" ({int(wait_time)}s)", style="dim yellow")
-            elif active_agent.status == AgentState.ACTIVE:
+            elif active_agent.status == 'active':
                 # Active work
                 text.append("⚙ ", style="cyan")
                 text.append(active_agent.current_operation or "Working...", style="bold cyan")
-            elif active_agent.status == AgentState.FAILED:
+            elif active_agent.status == 'failed':
                 # Failed
                 text.append("❌ ", style="red")
                 text.append(f"Agent #{active_agent.agent_id} failed", style="bold red")
@@ -252,15 +247,15 @@ class Layer1Renderer:
     def _get_border_style(self, snapshot: DashboardSnapshot) -> str:
         """Determine border color based on session state."""
         # Check for any failed agents
-        if any(a.status == AgentState.FAILED for a in snapshot.agents):
+        if any(a.status == 'failed' for a in snapshot.agents):
             return "red"
 
         # Check if all complete
-        if all(a.status == AgentState.COMPLETE for a in snapshot.agents) and snapshot.agents:
+        if all(a.status == 'complete' for a in snapshot.agents) and snapshot.agents:
             return "green"
 
         # Check if any waiting
-        if any(a.status == AgentState.WAITING_API for a in snapshot.agents):
+        if any(a.status == 'pending' for a in snapshot.agents):
             return "yellow"
 
         # Active work
@@ -295,7 +290,7 @@ class Layer2Renderer:
 
         # Add agent rows
         for agent in snapshot.agents:
-            is_selected = (agent.agent_id == ui_state.selected_agent_id)
+            is_selected = (agent.agent_id == ui_state.focused_agent_id)
             self._add_agent_row(table, agent, is_selected)
 
         # Footer
@@ -326,13 +321,13 @@ class Layer2Renderer:
         agent_type = Text(agent.agent_type or "unknown", style=style)
 
         # Progress bar
-        progress = self._render_progress_bar(agent.progress_percent, is_selected)
+        progress = self._render_progress_bar(agent.progress, is_selected)
 
         # State
-        state = self._render_state(agent.state, is_selected)
+        state = self._render_state(agent.status, is_selected)
 
         # Time
-        time_text = Text(self._format_time(agent.duration_seconds), style=style)
+        time_text = Text(self._format_time(agent.elapsed_seconds), style=style)
 
         # Blocking info
         blocking = self._render_blocking(agent, is_selected)
@@ -358,24 +353,24 @@ class Layer2Renderer:
 
         return text
 
-    def _render_state(self, state: AgentSnapshot, is_selected: bool) -> Text:
+    def _render_state(self, state: str, is_selected: bool) -> Text:
         """Render agent state with color."""
         text = Text()
 
-        state_str = state.value.upper()
+        state_str = state.upper()
 
         if is_selected:
             # Override color when selected
             text.append(state_str, style="bold white on blue")
         else:
             # Normal state colors
-            if state == AgentState.WAITING_API:
+            if state == 'pending':
                 text.append(state_str, style="yellow")
-            elif state == AgentState.ACTIVE:
+            elif state == 'active':
                 text.append(state_str, style="cyan")
-            elif state == AgentState.COMPLETE:
+            elif state == 'complete':
                 text.append(state_str, style="green")
-            elif state == AgentState.FAILED:
+            elif state == 'failed':
                 text.append(state_str, style="red")
             else:
                 text.append(state_str, style="white")
@@ -386,9 +381,9 @@ class Layer2Renderer:
         """Render blocking information."""
         text = Text()
 
-        if agent.blocking_reason:
+        if agent.blocking_agent_id:
             style = "bold white on blue" if is_selected else "yellow"
-            text.append(agent.blocking_reason, style=style)
+            text.append(agent.blocking_agent_id, style=style)
         else:
             style = "bold white on blue" if is_selected else "dim white"
             text.append("-", style=style)
@@ -412,8 +407,8 @@ class Layer2Renderer:
         """Render footer with controls."""
         text = Text()
 
-        if ui_state.selected_agent_id is not None:
-            text.append(f"Selected: Agent #{ui_state.selected_agent_id}", style="bold white")
+        if ui_state.focused_agent_id is not None:
+            text.append(f"Selected: Agent #{ui_state.focused_agent_id}", style="bold white")
             text.append(" | ", style="dim white")
 
         text.append("[1-9] Select", style="cyan")
@@ -439,7 +434,7 @@ class Layer3Renderer:
     def render(self, snapshot: DashboardSnapshot, ui_state: DashboardUIState) -> Layout:
         """Render agent detail layout with 4 panels."""
         # Find selected agent
-        agent = self._find_agent(snapshot, ui_state.selected_agent_id)
+        agent = self._find_agent(snapshot, ui_state.focused_agent_id)
         if not agent:
             # Fallback if agent not found
             return self._render_error()
@@ -458,7 +453,7 @@ class Layer3Renderer:
         layout["top"].update(self._render_agent_info(agent))
 
         # Render middle section (context + tool history)
-        layout["middle"].update(self._render_middle_section(agent, ui_state))
+        layout["middle"].update(self._render_middle_section(agent, snapshot.context, ui_state))
 
         # Render bottom panel (current operation)
         layout["bottom"].update(self._render_current_operation(agent))
@@ -487,25 +482,25 @@ class Layer3Renderer:
         lines.append(title_line)
 
         # Task
-        if agent.current_task:
+        if agent.task_description:
             task_line = Text()
             task_line.append("Task: ", style="cyan")
-            task_line.append(agent.current_task, style="white")
+            task_line.append(agent.task_description, style="white")
             lines.append(task_line)
 
         # Status
         status_line = Text()
         status_line.append("Status: ", style="cyan")
-        status_text = agent.state.value.upper()
+        status_text = agent.status.upper()
 
-        if agent.status == AgentState.WAITING_API:
+        if agent.status == 'pending':
             wait_time = agent.wait_duration_seconds or 0
             status_line.append(f"{status_text} ({wait_time:.1f}s)", style="yellow")
-        elif agent.status == AgentState.ACTIVE:
+        elif agent.status == 'active':
             status_line.append(status_text, style="cyan")
-        elif agent.status == AgentState.COMPLETE:
+        elif agent.status == 'complete':
             status_line.append(status_text, style="green")
-        elif agent.status == AgentState.FAILED:
+        elif agent.status == 'failed':
             status_line.append(status_text, style="red")
         else:
             status_line.append(status_text, style="white")
@@ -517,7 +512,7 @@ class Layer3Renderer:
         progress_line.append("Progress: ", style="cyan")
 
         bar_width = 10
-        percent = agent.progress_percent
+        percent = agent.progress
         filled = int((percent / 100) * bar_width)
         empty = bar_width - filled
 
@@ -530,22 +525,22 @@ class Layer3Renderer:
         content = Group(*lines)
         return Panel(content, border_style="cyan", padding=(0, 1))
 
-    def _render_middle_section(self, agent: AgentSnapshot, ui_state: DashboardUIState) -> Layout:
+    def _render_middle_section(self, agent: AgentSnapshot, context: ContextSnapshot, ui_state: DashboardUIState) -> Layout:
         """Render middle section with context and tool history."""
         layout = Layout()
 
-        show_context = ui_state.show_context
+        show_context = ui_state.show_context_panel
         show_tools = ui_state.show_tool_history
 
         if show_context and show_tools:
             # Show both panels
             layout.split_row(
-                Layout(self._render_context_panel(agent), name="context", ratio=30),
+                Layout(self._render_context_panel(context), name="context", ratio=30),
                 Layout(self._render_tool_history_panel(agent), name="tools", ratio=70),
             )
         elif show_context:
             # Only context
-            layout.update(self._render_context_panel(agent))
+            layout.update(self._render_context_panel(context))
         elif show_tools:
             # Only tools
             layout.update(self._render_tool_history_panel(agent))
@@ -558,18 +553,18 @@ class Layer3Renderer:
 
         return layout
 
-    def _render_context_panel(self, agent: AgentSnapshot) -> Panel:
+    def _render_context_panel(self, context: ContextSnapshot) -> Panel:
         """Render left panel with context information."""
         lines: List[Text] = []
 
         # Codebase files
         lines.append(Text("📁 Codebase:", style="bold yellow"))
-        if agent.codebase_files:
-            lines.append(Text(f"  {len(agent.codebase_files)} files", style="cyan"))
-            for file in agent.codebase_files[:5]:  # Show first 5
+        if context.codebase_file_list:
+            lines.append(Text(f"  {context.codebase_files_loaded} files", style="cyan"))
+            for file in context.codebase_file_list[:5]:  # Show first 5
                 lines.append(Text(f"  {file}", style="dim white"))
-            if len(agent.codebase_files) > 5:
-                lines.append(Text(f"  ... and {len(agent.codebase_files) - 5} more", style="dim white"))
+            if len(context.codebase_file_list) > 5:
+                lines.append(Text(f"  ... and {len(context.codebase_file_list) - 5} more", style="dim white"))
         else:
             lines.append(Text("  None", style="dim white"))
 
@@ -577,12 +572,12 @@ class Layer3Renderer:
 
         # Memory
         lines.append(Text("🧠 Memory:", style="bold yellow"))
-        if agent.memory_items:
-            lines.append(Text(f"  {len(agent.memory_items)} active", style="cyan"))
-            for memory in agent.memory_items[:3]:  # Show first 3
+        if context.memory_list:
+            lines.append(Text(f"  {context.memories_active} active", style="cyan"))
+            for memory in context.memory_list[:3]:  # Show first 3
                 lines.append(Text(f"  {memory}", style="dim white"))
-            if len(agent.memory_items) > 3:
-                lines.append(Text(f"  ... and {len(agent.memory_items) - 3} more", style="dim white"))
+            if len(context.memory_list) > 3:
+                lines.append(Text(f"  ... and {len(context.memory_list) - 3} more", style="dim white"))
         else:
             lines.append(Text("  None", style="dim white"))
 
@@ -590,19 +585,22 @@ class Layer3Renderer:
 
         # Tools
         lines.append(Text("🔧 Tools:", style="bold yellow"))
-        tool_count = agent.tool_count or 0
+        tool_count = context.tools_available or 0
         lines.append(Text(f"  {tool_count} available", style="cyan"))
+        for tool in context.tool_list[:5]:
+            lines.append(Text(f"  {tool}", style="dim white"))
 
         lines.append(Text())  # Blank line
 
         # MCP servers
         lines.append(Text("🔌 MCP:", style="bold yellow"))
-        if agent.mcp_servers:
-            lines.append(Text(f"  {len(agent.mcp_servers)} connected", style="cyan"))
-            for server in agent.mcp_servers[:3]:  # Show first 3
-                lines.append(Text(f"  {server} ✅", style="green"))
-            if len(agent.mcp_servers) > 3:
-                lines.append(Text(f"  ... and {len(agent.mcp_servers) - 3} more", style="dim white"))
+        if context.mcp_server_list:
+            lines.append(Text(f"  {context.mcp_servers_connected} connected", style="cyan"))
+            for server in context.mcp_server_list[:3]:  # Show first 3
+                status_icon = "✅" if server.status == 'connected' else "❌"
+                lines.append(Text(f"  {server.name} {status_icon}", style="green" if server.status == 'connected' else "red"))
+            if len(context.mcp_server_list) > 3:
+                lines.append(Text(f"  ... and {len(context.mcp_server_list) - 3} more", style="dim white"))
         else:
             lines.append(Text("  None", style="dim white"))
 
@@ -618,34 +616,29 @@ class Layer3Renderer:
         """Render right panel with tool call history."""
         lines: List[Text] = []
 
-        if agent.recent_tool_calls:
-            for call in agent.recent_tool_calls[-10:]:  # Show last 10
-                # Tool call line
-                call_line = Text()
-                call_line.append("→ ", style="yellow")
-                call_line.append(call.get("name", "unknown"), style="bold white")
-                call_line.append(f"({call.get('args', '')[:30]})", style="dim white")
-                duration = call.get("duration_ms", 0)
-                call_line.append(f" {duration / 1000:.1f}s", style="cyan")
-                lines.append(call_line)
-
-                # Result line
-                result_line = Text()
-                result_line.append("← ", style="cyan")
-                result_text = call.get("result", "")[:50]
-                result_line.append(result_text, style="dim white")
-                lines.append(result_line)
-
-                lines.append(Text())  # Blank line
-
-            # Total count
-            total = len(agent.recent_tool_calls)
-            if total > 10:
-                lines.append(Text(f"({total} calls total, showing last 10)", style="dim white"))
-            else:
-                lines.append(Text(f"({total} calls total)", style="dim white"))
-        else:
-            lines.append(Text("No tool calls yet", style="dim white"))
+        # Tool call summary
+        lines.append(Text(f"Total tool calls: {agent.tool_calls_count}", style="cyan"))
+        lines.append(Text())
+        
+        # Files created
+        if agent.files_created:
+            lines.append(Text("Files Created:", style="bold green"))
+            for file in agent.files_created[:8]:
+                lines.append(Text(f"  ✓ {file}", style="green"))
+            if len(agent.files_created) > 8:
+                lines.append(Text(f"  ... and {len(agent.files_created) - 8} more", style="dim white"))
+            lines.append(Text())
+        
+        # Files modified
+        if agent.files_modified:
+            lines.append(Text("Files Modified:", style="bold yellow"))
+            for file in agent.files_modified[:8]:
+                lines.append(Text(f"  ✎ {file}", style="yellow"))
+            if len(agent.files_modified) > 8:
+                lines.append(Text(f"  ... and {len(agent.files_modified) - 8} more", style="dim white"))
+        
+        if not agent.files_created and not agent.files_modified and agent.tool_calls_count == 0:
+            lines.append(Text("No activity yet", style="dim white"))
 
         content = Group(*lines)
         return Panel(
@@ -660,7 +653,7 @@ class Layer3Renderer:
         lines: List[Text] = []
 
         # Current operation
-        if agent.status == AgentState.WAITING_API:
+        if agent.status == 'pending':
             op_line = Text()
             op_line.append("⏳ Waiting: ", style="bold yellow")
             op_line.append("Claude API /v1/messages", style="white")
@@ -731,7 +724,7 @@ class Layer4Renderer:
     def render(self, snapshot: DashboardSnapshot, ui_state: DashboardUIState) -> Panel:
         """Render message stream panel with virtual scrolling."""
         # Find selected agent
-        agent = self._find_agent(snapshot, ui_state.selected_agent_id)
+        agent = self._find_agent(snapshot, ui_state.focused_agent_id)
         if not agent or not agent.messages:
             return self._render_empty()
 
