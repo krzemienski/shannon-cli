@@ -52,6 +52,7 @@ from .models import (
 from .library_discoverer import LibraryDiscoverer
 from .validator import ValidationOrchestrator
 from .git_manager import GitManager
+from .simple_executor import SimpleTaskExecutor
 
 __all__ = [
     # Prompts
@@ -67,6 +68,7 @@ __all__ = [
     'LibraryDiscoverer',
     'ValidationOrchestrator',
     'GitManager',
+    'SimpleTaskExecutor',
     
     # Models
     'LibraryRecommendation',

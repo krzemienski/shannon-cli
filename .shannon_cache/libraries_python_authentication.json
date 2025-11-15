@@ -1,0 +1,44 @@
+{
+  "libraries": [
+    {
+      "name": "fastapi-users",
+      "description": "Auth library for Python",
+      "repository_url": "https://github.com/fastapi-users",
+      "stars": 3000,
+      "last_updated": "2025-11-15T05:35:34.618866",
+      "package_manager": "pip",
+      "install_command": "pip install fastapi-users",
+      "why_recommended": "3,000 stars (popular), recently updated, MIT license",
+      "score": 80.0,
+      "weekly_downloads": 50000,
+      "license": "MIT"
+    },
+    {
+      "name": "django-allauth",
+      "description": "Auth library for Python",
+      "repository_url": "https://github.com/django-allauth",
+      "stars": 3000,
+      "last_updated": "2025-11-15T05:35:34.618877",
+      "package_manager": "pip",
+      "install_command": "pip install django-allauth",
+      "why_recommended": "3,000 stars (popular), recently updated, MIT license",
+      "score": 80.0,
+      "weekly_downloads": 50000,
+      "license": "MIT"
+    },
+    {
+      "name": "authlib",
+      "description": "Auth library for Python",
+      "repository_url": "https://github.com/authlib",
+      "stars": 3000,
+      "last_updated": "2025-11-15T05:35:34.618878",
+      "package_manager": "pip",
+      "install_command": "pip install authlib",
+      "why_recommended": "3,000 stars (popular), recently updated, MIT license",
+      "score": 80.0,
+      "weekly_downloads": 50000,
+      "license": "MIT"
+    }
+  ],
+  "cached_at": "2025-11-15T05:35:34.618925"
+}

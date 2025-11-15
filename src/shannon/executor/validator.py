@@ -318,12 +318,43 @@ class ValidationOrchestrator:
         """
         self.logger.debug(f"Running {check_name}: {command}")
         
-        # TODO: Actually run the command via run_terminal_cmd
-        # For now, return True (will be implemented when integrated with SDK)
+        # Execute command via subprocess
+        import subprocess
+        import asyncio
         
-        # Real implementation would be:
-        # result = await run_terminal_cmd(command, cwd=self.project_root)
-        # return result.exit_code == 0
-        
-        return True  # Placeholder
+        try:
+            # Run command in project directory
+            process = await asyncio.create_subprocess_shell(
+                command,
+                cwd=self.project_root,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            
+            # Wait for completion (5 min timeout)
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(),
+                    timeout=300
+                )
+            except asyncio.TimeoutError:
+                process.kill()
+                self.logger.error(f"{check_name} timed out after 5 minutes")
+                return False
+            
+            # Check exit code
+            success = process.returncode == 0
+            
+            if success:
+                self.logger.info(f"{check_name}: PASS")
+            else:
+                self.logger.warning(f"{check_name}: FAIL (exit code {process.returncode})")
+                if stderr:
+                    self.logger.debug(f"  Error: {stderr.decode()[:200]}")
+            
+            return success
+            
+        except Exception as e:
+            self.logger.error(f"{check_name} failed with exception: {e}")
+            return False
 

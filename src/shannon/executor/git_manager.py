@@ -281,12 +281,34 @@ class GitManager:
         full_command = f"git {command}"
         self.logger.debug(f"Running: {full_command}")
         
-        # TODO: Actually run via run_terminal_cmd in real implementation
-        # For now, simulate
+        # Execute git command via subprocess
+        import subprocess
+        import asyncio
         
-        # Real implementation:
-        # result = await run_terminal_cmd(full_command, cwd=self.project_root)
-        # return result.output
-        
-        return ""  # Placeholder
+        try:
+            process = await asyncio.create_subprocess_shell(
+                full_command,
+                cwd=self.project_root,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(),
+                timeout=30  # 30 second timeout for git commands
+            )
+            
+            if process.returncode != 0:
+                error_msg = stderr.decode() if stderr else "Unknown error"
+                raise Exception(f"Git command failed (exit {process.returncode}): {error_msg}")
+            
+            output = stdout.decode() if stdout else ""
+            return output
+            
+        except asyncio.TimeoutError:
+            self.logger.error(f"Git command timed out: {full_command}")
+            raise Exception(f"Git command timed out after 30s")
+        except Exception as e:
+            self.logger.error(f"Git command failed: {e}")
+            raise
 

@@ -1239,38 +1239,68 @@ def exec(
             ui.console.print(f"    - Branch would be: {branch_name}")
             ui.console.print()
             
+            # Phase 6: Simple execution
+            ui.console.print("[cyan]Phase 6:[/cyan] Task execution...")
+            ui.console.print()
+            
             if dry_run:
                 ui.console.print("[yellow]═══════════════════════════════════════════════════════════════[/yellow]")
                 ui.console.print("[yellow] DRY RUN MODE - No execution performed[/yellow]")
                 ui.console.print("[yellow]═══════════════════════════════════════════════════════════════[/yellow]")
                 ui.console.print()
-                ui.console.print("[bold]Execution Plan (Preview):[/bold]")
+                ui.console.print("[bold]Execution Plan:[/bold]")
                 ui.console.print()
                 ui.console.print(f"  1. Create branch: {branch_name}")
-                ui.console.print(f"  2. Invoke /shannon:wave with enhanced prompts")
-                ui.console.print(f"  3. Validate each step (3 tiers)")
-                ui.console.print(f"  4. Commit on validation pass")
-                ui.console.print(f"  5. Retry with research on failure (max {max_iterations}x)")
+                ui.console.print(f"  2. Discover libraries: {len(libraries) if libraries else 0} found")
+                ui.console.print(f"  3. Execute with enhanced prompts ({len(enhancements)} chars)")
+                ui.console.print(f"  4. Validate (3 tiers)")
+                ui.console.print(f"  5. Commit if validated")
                 ui.console.print()
-                ui.success("Dry run complete - ready for actual execution when /shannon:exec skill available")
+                
+                if libraries:
+                    ui.console.print("[bold]Recommended libraries:[/bold]")
+                    for lib in libraries[:3]:
+                        ui.console.print(f"  • {lib.name} - {lib.why_recommended}")
+                    ui.console.print()
+                
+                ui.success("Dry run complete")
             else:
+                # Actually execute using SimpleTaskExecutor
+                ui.console.print("[bold cyan]Executing with SimpleTaskExecutor...[/bold cyan]")
+                ui.console.print()
+                
+                from shannon.executor.simple_executor import SimpleTaskExecutor
+                
+                executor = SimpleTaskExecutor(Path.cwd())
+                result = await executor.execute(task, auto_commit=auto_commit)
+                
+                ui.console.print()
                 ui.console.print("[yellow]═══════════════════════════════════════════════════════════════[/yellow]")
-                ui.console.print("[yellow] V3.5 PREVIEW MODE[/yellow]")
-                ui.console.print("[yellow]═══════════════════════════════════════════════════════════════[/yellow]")
-                ui.console.print()
-                ui.console.print("[bold]V3.5 Core modules are ready:[/bold]")
-                ui.console.print("  ✓ PromptEnhancer - Enhanced system prompts")
-                ui.console.print("  ✓ LibraryDiscoverer - Find existing packages")
-                ui.console.print("  ✓ ValidationOrchestrator - 3-tier validation")
-                ui.console.print("  ✓ GitManager - Atomic commits")
-                ui.console.print()
-                ui.console.print("[bold]To enable full autonomous execution:[/bold]")
-                ui.console.print("  1. Implement /shannon:exec skill in Shannon Framework")
-                ui.console.print("  2. Skill will orchestrate: prime → research → plan → wave → validate → commit")
-                ui.console.print("  3. All core modules ready for integration")
-                ui.console.print()
-                ui.console.print("[dim]For now, use 'shannon wave' for execution.[/dim]")
-                ui.console.print()
+                
+                if result.success:
+                    ui.console.print("[yellow] ✅ TASK EXECUTION COMPLETE[/yellow]")
+                    ui.console.print("[yellow]═══════════════════════════════════════════════════════════════[/yellow]")
+                    ui.console.print()
+                    ui.console.print(f"[bold]Task:[/bold] {result.task_description}")
+                    ui.console.print(f"[bold]Branch:[/bold] {result.branch_name}")
+                    ui.console.print(f"[bold]Steps:[/bold] {result.steps_completed}/{result.steps_total}")
+                    ui.console.print(f"[bold]Duration:[/bold] {result.duration_seconds:.1f}s")
+                    
+                    if result.libraries_used:
+                        ui.console.print(f"[bold]Libraries:[/bold] {', '.join(result.libraries_used)}")
+                    
+                    if result.commits_created:
+                        ui.console.print(f"[bold]Commits:[/bold] {len(result.commits_created)}")
+                    
+                    ui.console.print()
+                    ui.success("Task execution successful")
+                else:
+                    ui.console.print("[yellow] ❌ TASK EXECUTION FAILED[/yellow]")
+                    ui.console.print("[yellow]═══════════════════════════════════════════════════════════════[/yellow]")
+                    ui.console.print()
+                    ui.console.print(f"[bold]Error:[/bold] {result.error_message}")
+                    ui.console.print()
+                    ui.error("Task execution failed - see error above")
             
         except Exception as e:
             ui.error(f"Exec failed: {e}")
