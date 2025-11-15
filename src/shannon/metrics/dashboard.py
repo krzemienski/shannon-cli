@@ -1,33 +1,20 @@
-"""Live Metrics Dashboard for Shannon CLI V3.0
+"""Live Metrics Dashboard for Shannon CLI V3.0+
 
-Two-layer real-time metrics display with keyboard control:
+V3.1 Integration: This module now wraps InteractiveDashboard for backwards compatibility
+while providing enhanced 4-layer navigation when agents/context are available.
 
-Layer 1 (Compact): 3-line progress summary
-- Progress bar with percentage
-- Cost, tokens, duration
-- Keyboard hint
-
-Layer 2 (Detailed): Full-screen streaming output
-- Progress bar at top
-- Streaming message buffer (scrollable)
-- Completed stages
-- Live metrics
-- Keyboard controls
-
-Keyboard Controls:
-- Enter: Expand to Layer 2
-- Esc: Collapse to Layer 1
-- q: Request quit
-- p: Request pause
+Backwards Compatible Behavior:
+- With only MetricsCollector: Simple 2-layer view (V3.0 behavior)
+- With AgentStateTracker: Full 4-layer interactive TUI (V3.1 behavior)
 
 Architecture:
-    MetricsCollector → LiveDashboard.render() → Rich.Live → Terminal (4 Hz)
+    V3.0: MetricsCollector → LiveDashboard → Rich.Live → Terminal
+    V3.1: All Managers → InteractiveDashboard → 4 Layers → Terminal
 
-Design Decision (from SHANNON_CLI_V3_ARCHITECTURE.md):
-    - 4 Hz refresh rate (smooth without CPU waste)
-    - Non-blocking keyboard input (termios)
-    - Streaming buffer (last 100 messages)
-    - Graceful terminal resize handling
+Design Decision:
+    - Automatic upgrade: If agents/context available, use V3.1
+    - Graceful fallback: If not, use V3.0 simple view
+    - Same API: No breaking changes for existing code
 """
 
 from typing import Optional, Callable
@@ -90,7 +77,10 @@ class LiveDashboard:
         collector: MetricsCollector,
         console: Optional[Console] = None,
         refresh_per_second: int = 4,
-        buffer_size: int = 100
+        buffer_size: int = 100,
+        agents=None,  # V3.1: AgentStateTracker
+        context=None,  # V3.1: ContextManager
+        session=None  # V3.1: SessionManager
     ):
         """
         Initialize live dashboard with message streaming
@@ -100,28 +90,45 @@ class LiveDashboard:
             console: Rich console (creates default if None)
             refresh_per_second: UI refresh rate (default: 4 Hz)
             buffer_size: Max streaming messages to buffer
+            agents: (V3.1) AgentStateTracker for multi-agent support
+            context: (V3.1) ContextManager for context visibility
+            session: (V3.1) SessionManager for session tracking
         """
         self.collector = collector
         self.console = console or Console()
         self.refresh_per_second = refresh_per_second
         self.buffer_size = buffer_size
 
-        # UI state
+        # V3.1: Check if we should use InteractiveDashboard
+        self._use_v31 = agents is not None
+        self._v31_dashboard = None
+
+        if self._use_v31:
+            # Use V3.1 InteractiveDashboard
+            try:
+                from shannon.ui.dashboard_v31 import InteractiveDashboard
+                self._v31_dashboard = InteractiveDashboard(
+                    metrics=collector,
+                    agents=agents,
+                    context=context,
+                    session=session,
+                    console=console,
+                    refresh_per_second=refresh_per_second
+                )
+            except Exception as e:
+                # Fallback to V3.0 if V3.1 fails
+                import logging
+                logging.warning(f"Failed to initialize V3.1 dashboard, using V3.0: {e}")
+                self._use_v31 = False
+
+        # V3.0 components (fallback or when no agents)
         self.expanded = False
         self.streaming_buffer: deque[str] = deque(maxlen=buffer_size)
-
-        # Keyboard handler
         self.keyboard = KeyboardHandler()
-
-        # Control flags (read by external code)
         self.quit_requested = False
         self.pause_requested = False
-
-        # Rich components
         self._live: Optional[Live] = None
         self._progress: Optional[Progress] = None
-
-        # Last known snapshot (for rendering)
         self._last_snapshot: Optional[MetricsSnapshot] = None
 
     def __enter__(self):
@@ -138,65 +145,67 @@ class LiveDashboard:
         """
         Start dashboard rendering
 
-        Sets up:
-        - Keyboard handler (non-blocking input)
-        - Rich Live display (4 Hz refresh)
-        - Progress bar
+        V3.1: Delegates to InteractiveDashboard if available
+        V3.0: Uses simple LiveDashboard
         """
-        # Setup keyboard
-        self.keyboard.setup_nonblocking()
-
-        # Create Rich Live display
-        self._live = Live(
-            self.render(),
-            console=self.console,
-            refresh_per_second=self.refresh_per_second,
-            transient=False  # Keep display after exit
-        )
-
-        # Start live rendering
-        self._live.start()
+        if self._use_v31 and self._v31_dashboard:
+            # Use V3.1 interactive dashboard
+            self._v31_dashboard.start()
+            # Sync quit flags
+            self.quit_requested = self._v31_dashboard.quit_requested
+        else:
+            # V3.0 fallback
+            self.keyboard.setup_nonblocking()
+            self._live = Live(
+                self.render(),
+                console=self.console,
+                refresh_per_second=self.refresh_per_second,
+                transient=False
+            )
+            self._live.start()
 
     def stop(self) -> None:
         """
         Stop dashboard rendering
 
-        Cleans up:
-        - Rich Live display
-        - Keyboard handler (restore terminal)
+        V3.1: Delegates to InteractiveDashboard if available
+        V3.0: Cleans up simple dashboard
         """
-        if self._live:
-            self._live.stop()
-            self._live = None
-
-        # Restore terminal
-        self.keyboard.restore_terminal()
+        if self._use_v31 and self._v31_dashboard:
+            # Stop V3.1 dashboard
+            self._v31_dashboard.stop()
+            # Sync quit flag
+            self.quit_requested = self._v31_dashboard.quit_requested
+        else:
+            # V3.0 cleanup
+            if self._live:
+                self._live.stop()
+                self._live = None
+            self.keyboard.restore_terminal()
 
     def update(self, streaming_message: Optional[str] = None) -> None:
         """
         Update dashboard state
 
-        Called externally to:
-        1. Add streaming messages to buffer
-        2. Check for keyboard input
-        3. Trigger re-render
+        V3.1: Delegates to InteractiveDashboard.update()
+        V3.0: Updates simple dashboard
 
         Args:
             streaming_message: New message to add to buffer (optional)
         """
-        # Add to streaming buffer
-        if streaming_message:
-            self.streaming_buffer.append(streaming_message)
-
-        # Get latest metrics
-        self._last_snapshot = self.collector.get_snapshot()
-
-        # Check for keyboard input
-        self._handle_keyboard()
-
-        # Update live display
-        if self._live:
-            self._live.update(self.render())
+        if self._use_v31 and self._v31_dashboard:
+            # V3.1: Use interactive dashboard update
+            self._v31_dashboard.update()
+            # Sync quit flag
+            self.quit_requested = self._v31_dashboard.quit_requested
+        else:
+            # V3.0: Traditional update
+            if streaming_message:
+                self.streaming_buffer.append(streaming_message)
+            self._last_snapshot = self.collector.get_snapshot()
+            self._handle_keyboard()
+            if self._live:
+                self._live.update(self.render())
 
     def render(self) -> RenderableType:
         """

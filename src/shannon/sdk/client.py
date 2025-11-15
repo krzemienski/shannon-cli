@@ -240,6 +240,85 @@ class ShannonSDKClient:
             self.logger.error(f"Command invocation failed: {e}")
             raise
 
+    async def invoke_command_with_enhancements(
+        self,
+        command: str,
+        args: str = "",
+        system_prompt_enhancements: str = "",
+        progress_callback: Optional[Callable[[Any], None]] = None
+    ) -> AsyncIterator[Any]:
+        """
+        Invoke Shannon command with enhanced system prompts (V3.5)
+        
+        This method allows injecting custom system prompt instructions
+        via ClaudeAgentOptions.system_prompt.append. Used by V3.5
+        autonomous executor to inject library discovery, validation,
+        and git workflow instructions.
+        
+        Args:
+            command: Command name (e.g., '/shannon:exec')
+            args: Command arguments
+            system_prompt_enhancements: Additional system prompt text to inject
+            progress_callback: Optional callback for progress
+            
+        Yields:
+            SDK messages
+            
+        Example:
+            enhancements = build_exec_enhancements(task, project_type)
+            async for msg in client.invoke_command_with_enhancements(
+                '/shannon:exec',
+                'fix iOS login',
+                enhancements
+            ):
+                print(msg)
+        """
+        self.logger.info(f"Invoking command with enhancements: {command} {args}")
+        self.logger.debug(f"  System prompt enhancements: {len(system_prompt_enhancements)} chars")
+        
+        # Format command with args
+        prompt = f"{command} {args}".strip()
+        
+        # Create enhanced options
+        enhanced_options = ClaudeAgentOptions(
+            plugins=self.base_options.plugins,
+            setting_sources=self.base_options.setting_sources,
+            permission_mode=self.base_options.permission_mode,
+            allowed_tools=self.base_options.allowed_tools,
+            system_prompt={
+                "type": "preset",
+                "preset": "claude_code",
+                "append": system_prompt_enhancements
+            } if system_prompt_enhancements else self.base_options.system_prompt
+        )
+        
+        try:
+            # Query with enhanced options
+            query_iterator = query(prompt=prompt, options=enhanced_options)
+            
+            # V3 Enhancement: Wrap with interceptor if enabled
+            if self.enable_v3_features and self.interceptor:
+                query_iterator = self.interceptor.intercept(
+                    query_iterator,
+                    self.message_collectors
+                )
+                if self.stream_handler:
+                    query_iterator = self.stream_handler.handle(query_iterator)
+            
+            # Iterate messages
+            async for msg in query_iterator:
+                if progress_callback:
+                    try:
+                        progress_callback(msg)
+                    except Exception as e:
+                        self.logger.warning(f"Progress callback error: {e}")
+                
+                yield msg
+        
+        except Exception as e:
+            self.logger.error(f"Enhanced command invocation failed: {e}")
+            raise
+
     def _find_shannon_framework(self) -> Path:
         """
         Locate Shannon Framework directory

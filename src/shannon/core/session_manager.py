@@ -363,6 +363,70 @@ class SessionManager(ISessionStore):
             'session_dir': str(self.session_dir)
         }
 
+    def start_session(self, command: str, goal: Optional[str] = None, **kwargs) -> None:
+        """
+        Start a new session with command context.
+
+        Args:
+            command: Command being executed ('analyze', 'wave', 'task')
+            goal: Optional north star goal
+            **kwargs: Additional session data (phase, wave_number, total_waves, etc.)
+
+        Example:
+            >>> session.start_session('analyze', goal='Analyze specification')
+            >>> session.start_session('wave', wave_number=2, total_waves=5)
+        """
+        session_data = {
+            'command': command,
+            'goal': goal,
+            'started_at': datetime.now().isoformat(),
+            **kwargs
+        }
+        self.write_memory('__session__', session_data)
+
+    def update_session(self, **kwargs) -> None:
+        """
+        Update current session data.
+
+        Args:
+            **kwargs: Session fields to update (phase, progress, etc.)
+
+        Example:
+            >>> session.update_session(phase='Wave 2/5', progress=0.4)
+        """
+        current = self.read_memory('__session__') or {}
+        current.update(kwargs)
+        current['updated_at'] = datetime.now().isoformat()
+        self.write_memory('__session__', current)
+
+    def get_current_session(self) -> Optional[Dict[str, Any]]:
+        """
+        Get current session execution context.
+
+        Returns:
+            Dictionary with session data:
+                - session_id: str
+                - command: str ('analyze', 'wave', 'task')
+                - goal: Optional[str] (north star goal)
+                - phase: Optional[str] (current phase)
+                - wave_number: Optional[int]
+                - total_waves: Optional[int]
+                - started_at: str (ISO timestamp)
+                - updated_at: str (ISO timestamp)
+
+            None if no active session.
+
+        Example:
+            >>> session_data = session.get_current_session()
+            >>> if session_data:
+            ...     print(f"Running: {session_data['command']}")
+        """
+        data = self.read_memory('__session__')
+        if data:
+            # Add session_id to response
+            data['session_id'] = self.session_id
+        return data
+
     @staticmethod
     def list_all_sessions(config: Optional[ShannonConfig] = None) -> List[str]:
         """
