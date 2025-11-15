@@ -62,14 +62,14 @@ __all__ = [
     'get_combined_core_instructions',
     'get_enhancement_for_project',
     'get_all_project_types',
-    
+
     # Components
     'PromptEnhancer',
     'LibraryDiscoverer',
     'ValidationOrchestrator',
     'GitManager',
     'SimpleTaskExecutor',
-    
+
     # Models
     'LibraryRecommendation',
     'ValidationCriteria',
