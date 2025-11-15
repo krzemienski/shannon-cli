@@ -37,6 +37,10 @@ from shannon.sdk.message_parser import MessageParser
 from shannon.ui.progress import ProgressUI
 from shannon.setup.framework_detector import FrameworkDetector
 from shannon.setup.wizard import SetupWizard
+from shannon.agents import AgentStateTracker, AgentMessageCollector
+from shannon.metrics.collector import MetricsCollector
+from shannon.sdk.interceptor import MessageInterceptor
+from shannon.ui.dashboard_v31 import InteractiveDashboard
 
 
 def require_framework():
@@ -92,6 +96,44 @@ def require_framework():
             return f(*args, **kwargs)
         return wrapped
     return decorator
+
+
+def _init_dashboard_runtime(
+    operation_name: str,
+    session: SessionManager,
+    agent_type: str,
+    agent_task: str,
+    *,
+    context_manager=None,
+    wave_number: int = 1
+):
+    """
+    Helper to build collectors, trackers, and dashboard for interactive telemetry.
+    """
+    collector = MetricsCollector(operation_name=operation_name)
+    tracker = AgentStateTracker()
+
+    agent_id = f"{operation_name}-{int(time.time())}"
+    tracker.register_agent(
+        agent_id=agent_id,
+        wave_number=wave_number,
+        agent_type=agent_type,
+        task_description=agent_task
+    )
+    tracker.mark_started(agent_id)
+
+    agent_collector = AgentMessageCollector(agent_id, tracker)
+
+    dashboard = InteractiveDashboard(
+        metrics=collector,
+        agents=tracker,
+        context=context_manager,
+        session=session
+    )
+
+    interceptor = MessageInterceptor()
+
+    return collector, tracker, agent_collector, dashboard, interceptor, agent_id
 
 
 @click.group()
@@ -158,6 +200,13 @@ def analyze(
             generated_session_id = session_id
 
         session = SessionManager(generated_session_id, config)
+        session.update_session_metadata(
+            command='analyze',
+            goal=None,
+            phase='Spec Analysis',
+            wave_number=None,
+            total_waves=None
+        )
         console = Console()
 
         try:
@@ -236,71 +285,55 @@ def analyze(
 
             messages = []
             message_count = 0
+            dashboard_success = False
+            collector = None
+            agent_tracker = None
+            agent_id = None
 
             try:
                 # Import SDK types
                 from claude_agent_sdk import query, SystemMessage, ToolUseBlock, TextBlock, ThinkingBlock, ResultMessage
 
-                # V3: Live Dashboard with interceptor pattern
-                if not no_cache and orchestrator:  # Use no_cache as proxy for metrics (will add --no-metrics later)
+                if not no_cache:
                     try:
-                        from shannon.sdk.interceptor import MessageInterceptor
-                        from shannon.metrics.collector import MetricsCollector
-                        from shannon.metrics.dashboard import LiveDashboard
+                        spec_label = spec_path.name if spec_path.exists() else "specification"
+                        collector, agent_tracker, agent_collector, dashboard, interceptor, agent_id = _init_dashboard_runtime(
+                            operation_name="spec-analysis",
+                            session=session,
+                            agent_type="spec-analyzer",
+                            agent_task=f"Analyze {spec_label}",
+                            context_manager=getattr(orchestrator, 'context', None)
+                        )
 
-                        console.print("[bold]Analyzing with live metrics dashboard...[/bold]")
-                        console.print("[dim]Press Enter for detailed view, Esc to collapse[/dim]\n")
+                        console.print("[bold]Analyzing with interactive dashboard...[/bold]")
+                        console.print()
 
-                        # Create metrics collector and dashboard
-                        collector = MetricsCollector(operation_name="spec-analysis")
-                        dashboard = LiveDashboard(collector, refresh_per_second=4)
-                        interceptor = MessageInterceptor()
-
-                        # Create query iterator
-                        # CRITICAL: Use /spec (not /shannon:spec - no namespace in SDK loading)
                         query_iter = query(
                             prompt=f'/spec "{spec_text}"',
                             options=client.base_options
                         )
 
-                        # Intercept messages for metrics collection
-                        instrumented_iter = interceptor.intercept(query_iter, [collector])
-
-                        # Run with live dashboard (sync context manager)
                         with dashboard:
-                            async for msg in instrumented_iter:
+                            async for msg in interceptor.intercept(
+                                query_iter,
+                                [collector, agent_collector]
+                            ):
                                 messages.append(msg)
                                 message_count += 1
 
-                                # Pass readable message content to dashboard for display
-                                from claude_agent_sdk import TextBlock, ToolUseBlock, ThinkingBlock
-
-                                if isinstance(msg, TextBlock):
-                                    # Show Shannon's text output
-                                    dashboard.update(msg.text)
-                                elif isinstance(msg, ToolUseBlock):
-                                    # Show tool calls
-                                    dashboard.update(f"→ Tool: {msg.name}")
-                                elif isinstance(msg, ThinkingBlock):
-                                    # Show thinking (truncated)
-                                    thinking_preview = msg.thinking[:100] + "..." if len(msg.thinking) > 100 else msg.thinking
-                                    dashboard.update(f"💭 {thinking_preview}")
-                                elif hasattr(msg, 'content'):
-                                    # Handle other message types with content
-                                    for block in msg.content:
-                                        if isinstance(block, TextBlock):
-                                            dashboard.update(block.text)
-                                        elif isinstance(block, ToolUseBlock):
-                                            dashboard.update(f"→ Tool: {block.name}")
+                        agent_tracker.mark_complete(agent_id)
+                        dashboard_success = True
 
                         console.print("\n[dim]Analysis complete, processing results...[/dim]\n")
 
-                        # Show final metrics from collector
                         final_metrics = collector.get_snapshot()
                         if final_metrics.cost_total > 0 or final_metrics.tokens_total > 0:
                             console.print("[bold cyan]📊 Final Metrics:[/bold cyan]")
                             console.print(f"  Cost: [green]${final_metrics.cost_total:.4f}[/green]")
-                            console.print(f"  Tokens: [green]{final_metrics.tokens_total:,}[/green] ({final_metrics.tokens_input:,} in / {final_metrics.tokens_output:,} out)")
+                            console.print(
+                                f"  Tokens: [green]{final_metrics.tokens_total:,}[/green] "
+                                f"({final_metrics.tokens_input:,} in / {final_metrics.tokens_output:,} out)"
+                            )
                             console.print(f"  Duration: [green]{final_metrics.duration_seconds:.1f}s[/green]")
                             console.print(f"  Messages: [green]{final_metrics.message_count}[/green]")
                             console.print()
@@ -308,15 +341,19 @@ def analyze(
                     except Exception as e:
                         console.print(f"[yellow]Dashboard unavailable: {e}[/yellow]")
                         console.print("[dim]Falling back to standard output...[/dim]\n")
-                        # Fall through to V2 mode below
+                        if agent_tracker and agent_id:
+                            try:
+                                agent_tracker.mark_failed(agent_id, str(e))
+                            except Exception:
+                                pass
+                        messages = []
+                        message_count = 0
+                        dashboard_success = False
 
-                # V2: Standard streaming output (or dashboard fallback)
-                if len(messages) == 0:  # Dashboard didn't run or failed
+                if not dashboard_success:
                     console.print("[bold]Invoking Shannon Framework:[/bold]")
                     console.print()
 
-                    # Use query() DIRECTLY
-                    # CRITICAL: Use /spec (not /shannon:spec - no namespace when plugin loaded)
                     async for msg in query(
                         prompt=f'/spec "{spec_text}"',
                         options=client.base_options
@@ -324,9 +361,6 @@ def analyze(
                         messages.append(msg)
                         message_count += 1
 
-                    # ═══════════════════════════════════════════════
-                    # SystemMessage - Plugin initialization
-                    # ═══════════════════════════════════════════════
                     if isinstance(msg, SystemMessage):
                         if msg.subtype == 'init':
                             plugins = msg.data.get('plugins', [])
@@ -336,13 +370,9 @@ def analyze(
                                 console.print("[dim]  ✓ Shannon Framework loaded[/dim]")
                             console.print()
 
-                    # ═══════════════════════════════════════════════
-                    # ToolUseBlock - Show EVERY tool call
-                    # ═══════════════════════════════════════════════
                     elif isinstance(msg, ToolUseBlock):
                         console.print(f"[cyan]→ Tool:[/cyan] [bold]{msg.name}[/bold]")
 
-                        # Format tool input based on tool type
                         if msg.name == "Read":
                             file_path = msg.input.get('file_path', '')
                             console.print(f"  [dim]Reading: {file_path}[/dim]")
@@ -356,7 +386,6 @@ def analyze(
                             command = msg.input.get('command', '')
                             console.print(f"  [dim]Command: {command}[/dim]")
                         else:
-                            # Show first 100 chars of input for other tools
                             input_preview = str(msg.input)[:100]
                             if len(str(msg.input)) > 100:
                                 input_preview += "..."
@@ -364,37 +393,24 @@ def analyze(
 
                         console.print()
 
-                    # ═══════════════════════════════════════════════
-                    # TextBlock - Show ALL text output
-                    # ═══════════════════════════════════════════════
                     elif isinstance(msg, TextBlock):
                         text = msg.text
 
-                        # Format based on content type but SHOW EVERYTHING
                         if "Complexity:" in text or "Dimension" in text:
-                            # Highlight important analysis output
                             console.print(f"[green]{text}[/green]")
                         elif any(keyword in text.lower() for keyword in ["calculating", "analyzing", "processing"]):
-                            # Progress indicators with icon
                             console.print(f"[yellow]⚙[/yellow]  {text}")
                         elif text.startswith("##") or text.startswith("#"):
-                            # Markdown headers
                             console.print(f"[bold cyan]{text}[/bold cyan]")
                         elif "|" in text and ("---" in text or text.count("|") > 3):
-                            # Tables - show with formatting preserved
                             console.print(f"[dim]{text}[/dim]")
                         else:
-                            # Regular output - show all content
                             console.print(text)
 
                         console.print()
 
-                    # ═══════════════════════════════════════════════
-                    # ThinkingBlock - Show internal reasoning
-                    # ═══════════════════════════════════════════════
                     elif isinstance(msg, ThinkingBlock):
                         thinking_text = msg.thinking
-                        # Show first 500 chars of thinking to avoid overwhelming output
                         preview = thinking_text[:500]
                         if len(thinking_text) > 500:
                             preview += "..."
@@ -402,14 +418,10 @@ def analyze(
                         console.print(f"[dim]{preview}[/dim]")
                         console.print()
 
-                    # ═══════════════════════════════════════════════
-                    # ToolResultBlock - Show tool execution results
-                    # ═══════════════════════════════════════════════
                     elif isinstance(msg, ToolResultBlock):
                         if msg.is_error:
                             console.print(f"[red]✗ Tool error:[/red] {msg.content}")
                         else:
-                            # Show preview of result content
                             if msg.content:
                                 result_preview = str(msg.content)[:200]
                                 if len(str(msg.content)) > 200:
@@ -417,14 +429,9 @@ def analyze(
                                 console.print(f"[dim]  Result: {result_preview}[/dim]")
                         console.print()
 
-                    # ═══════════════════════════════════════════════
-                    # AssistantMessage - Handle content blocks
-                    # ═══════════════════════════════════════════════
                     elif isinstance(msg, AssistantMessage):
-                        # Unpack and display content blocks
                         for block in msg.content:
                             if isinstance(block, TextBlock):
-                                # Display text content
                                 text = block.text
                                 if "Complexity:" in text or "Dimension" in text:
                                     console.print(f"[green]{text}[/green]")
@@ -438,9 +445,6 @@ def analyze(
                                 console.print(f"[cyan]→ Tool:[/cyan] {block.name}")
                                 console.print()
 
-                    # ═══════════════════════════════════════════════
-                    # ResultMessage - Final execution statistics
-                    # ═══════════════════════════════════════════════
                     elif isinstance(msg, ResultMessage):
                         console.print("[bold]Execution Complete:[/bold]")
                         console.print(f"  Duration: {msg.duration_ms}ms")
@@ -550,6 +554,13 @@ def wave(request: str, session_id: Optional[str], verbose: bool) -> None:
 
             # Load session
             session = SessionManager(target_session_id, config)
+            session.update_session_metadata(
+                command='wave',
+                goal=request,
+                phase='Wave Execution',
+                wave_number=None,
+                total_waves=None
+            )
 
             # Verify analysis exists
             analysis = session.read_memory('spec_analysis')
@@ -576,48 +587,44 @@ def wave(request: str, session_id: Optional[str], verbose: bool) -> None:
             # Invoke wave orchestration skill
             messages = []
 
-            # V3: Use live dashboard for wave execution
+            dashboard_success = False
+            agent_tracker = None
+            agent_id = None
+
             try:
-                from shannon.sdk.interceptor import MessageInterceptor
-                from shannon.metrics.collector import MetricsCollector
-                from shannon.metrics.dashboard import LiveDashboard
+                collector, agent_tracker, agent_collector, dashboard, interceptor, agent_id = _init_dashboard_runtime(
+                    operation_name="wave-execution",
+                    session=session,
+                    agent_type="wave-runner",
+                    agent_task=f"Wave request: {request}",
+                    context_manager=None
+                )
 
-                ui.console.print("[dim]Executing wave with live dashboard...[/dim]\n")
+                ui.console.print("[dim]Executing wave with interactive dashboard...[/dim]\n")
 
-                collector = MetricsCollector(operation_name="wave-execution")
-                dashboard = LiveDashboard(collector, refresh_per_second=4)
-                interceptor = MessageInterceptor()
-
-                # Wrap wave execution with dashboard
                 wave_iter = client.invoke_command('/shannon:wave', request)
-                instrumented_iter = interceptor.intercept(wave_iter, [collector])
 
                 with dashboard:
-                    async for msg in instrumented_iter:
+                    async for msg in interceptor.intercept(
+                        wave_iter,
+                        [collector, agent_collector]
+                    ):
                         messages.append(msg)
 
-                        # Pass readable messages to dashboard
-                        from claude_agent_sdk import TextBlock, ToolUseBlock, ThinkingBlock
-
-                        if isinstance(msg, TextBlock):
-                            dashboard.update(msg.text)
-                        elif isinstance(msg, ToolUseBlock):
-                            dashboard.update(f"→ Tool: {msg.name}")
-                        elif isinstance(msg, ThinkingBlock):
-                            preview = msg.thinking[:100] + "..." if len(msg.thinking) > 100 else msg.thinking
-                            dashboard.update(f"💭 {preview}")
-                        elif hasattr(msg, 'content'):
-                            for block in msg.content:
-                                if isinstance(block, TextBlock):
-                                    dashboard.update(block.text)
-                                elif isinstance(block, ToolUseBlock):
-                                    dashboard.update(f"→ Tool: {block.name}")
-
+                agent_tracker.mark_complete(agent_id)
+                dashboard_success = True
                 ui.console.print("\n[dim]Wave complete, processing results...[/dim]\n")
 
             except Exception as e:
                 ui.console.print(f"[yellow]Dashboard unavailable: {e}, using standard output[/yellow]\n")
+                if agent_tracker and agent_id:
+                    try:
+                        agent_tracker.mark_failed(agent_id, str(e))
+                    except Exception:
+                        pass
+                dashboard_success = False
 
+            if not dashboard_success:
                 # Fallback: Standard wave execution
                 try:
                     async for msg in client.invoke_command('/shannon:wave', request):
@@ -950,6 +957,13 @@ def task(
                 generated_session_id = session_id
 
             session = SessionManager(generated_session_id, config)
+            session.update_session_metadata(
+                command='task',
+                goal=None,
+                phase='Task Automation',
+                wave_number=None,
+                total_waves=None
+            )
 
             # Display header
             ui.console.print()
@@ -1023,41 +1037,41 @@ def task(
             # Use /shannon:task command with dashboard
             wave_messages = []
 
-            # V3: Live dashboard for task execution
-            try:
-                from shannon.sdk.interceptor import MessageInterceptor
-                from shannon.metrics.collector import MetricsCollector
-                from shannon.metrics.dashboard import LiveDashboard
+            dashboard_success = False
+            task_tracker = None
+            task_agent_id = None
 
-                collector = MetricsCollector(operation_name="task-execution")
-                dashboard = LiveDashboard(collector, refresh_per_second=4)
-                interceptor = MessageInterceptor()
+            try:
+                collector, task_tracker, task_agent_collector, dashboard, interceptor, task_agent_id = _init_dashboard_runtime(
+                    operation_name="task-execution",
+                    session=session,
+                    agent_type="task-orchestrator",
+                    agent_task="Automated task execution",
+                    context_manager=None
+                )
 
                 task_iter = client.invoke_command('/shannon:task', spec_text)
-                instrumented_iter = interceptor.intercept(task_iter, [collector])
 
                 with dashboard:
-                    async for msg in instrumented_iter:
+                    async for msg in interceptor.intercept(
+                        task_iter,
+                        [collector, task_agent_collector]
+                    ):
                         wave_messages.append(msg)
 
-                        # Stream messages to dashboard
-                        from claude_agent_sdk import TextBlock, ToolUseBlock, ThinkingBlock
-
-                        if isinstance(msg, TextBlock):
-                            dashboard.update(msg.text)
-                        elif isinstance(msg, ToolUseBlock):
-                            dashboard.update(f"→ Tool: {msg.name}")
-                        elif isinstance(msg, ThinkingBlock):
-                            preview = msg.thinking[:100] + "..." if len(msg.thinking) > 100 else msg.thinking
-                            dashboard.update(f"💭 {preview}")
-                        elif hasattr(msg, 'content'):
-                            for block in msg.content:
-                                if isinstance(block, TextBlock):
-                                    dashboard.update(block.text)
+                task_tracker.mark_complete(task_agent_id)
+                dashboard_success = True
 
             except Exception as e:
                 ui.console.print(f"[yellow]Dashboard unavailable: {e}[/yellow]\n")
+                if task_tracker and task_agent_id:
+                    try:
+                        task_tracker.mark_failed(task_agent_id, str(e))
+                    except Exception:
+                        pass
+                dashboard_success = False
 
+            if not dashboard_success:
                 # Fallback
                 try:
                     async for msg in client.invoke_command('/shannon:task', spec_text):

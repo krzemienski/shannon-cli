@@ -9,6 +9,7 @@ Part of: V3.1 Wave 3 (Integration)
 """
 
 import asyncio
+import threading
 import time
 from typing import Optional
 from rich.console import Console
@@ -103,6 +104,7 @@ class InteractiveDashboard:
         # Control flags
         self.running = False
         self.quit_requested = False
+        self._update_thread: Optional[threading.Thread] = None
 
     def __enter__(self):
         """Start dashboard in context manager"""
@@ -140,6 +142,13 @@ class InteractiveDashboard:
         self.running = True
         self._live.start()
 
+        # Start background update loop
+        self._update_thread = threading.Thread(
+            target=self.run_update_loop,
+            daemon=True
+        )
+        self._update_thread.start()
+
     def stop(self):
         """
         Stop interactive dashboard
@@ -147,6 +156,11 @@ class InteractiveDashboard:
         Restores terminal and stops live display.
         """
         self.running = False
+
+        update_thread = self._update_thread
+        if update_thread and update_thread is not threading.current_thread():
+            update_thread.join(timeout=1.0)
+        self._update_thread = None
 
         if self._live:
             self._live.stop()
@@ -186,7 +200,7 @@ class InteractiveDashboard:
                 # Check for global quit
                 if key.key == 'q':
                     self.quit_requested = True
-                    self.stop()
+                    self.running = False
                     return
 
                 # Navigate

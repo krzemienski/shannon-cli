@@ -11,6 +11,7 @@ Part of: V3.1 Wave 0 (Data Foundation)
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 import time
+import json
 
 from shannon.metrics.collector import MetricsCollector
 from .models import (
@@ -223,6 +224,7 @@ class DashboardDataProvider:
                 files_created=state.files_created,
                 files_modified=state.files_modified,
                 tool_calls_count=len(state.tool_calls),
+                 recent_tool_calls=self._format_recent_tool_calls(state.tool_calls),
                 error_message=state.error_message
             ))
 
@@ -246,6 +248,60 @@ class DashboardDataProvider:
             return "Processing..."
 
         return None
+
+    def _format_recent_tool_calls(self, tool_calls: Any) -> List[str]:
+        """Return human-readable summary of recent tool calls."""
+        if not tool_calls:
+            return []
+
+        # Only show the most recent 10 entries to avoid large payloads
+        recent_calls = tool_calls[-10:]
+        return [self._summarize_tool_call(call) for call in recent_calls]
+
+    def _summarize_tool_call(self, call: Any) -> str:
+        """Convert a raw tool call dict into a short readable string."""
+        arrow = "→"
+        name = "tool"
+        detail = ""
+
+        if isinstance(call, dict):
+            name = (call.get('name') or call.get('tool') or call.get('command') or name)
+
+            direction = str(call.get('direction', 'call')).lower()
+            if direction in ("result", "response", "output"):
+                arrow = "←"
+
+            status = call.get('status')
+            duration = call.get('duration_ms') or call.get('duration')
+            args = call.get('args') or call.get('input') or call.get('command')
+
+            details: List[str] = []
+            if status:
+                details.append(f"[{status}]")
+
+            if duration:
+                try:
+                    details.append(f"{float(duration):.0f}ms")
+                except (ValueError, TypeError):
+                    details.append(str(duration))
+
+            if isinstance(args, (dict, list)):
+                try:
+                    details.append(json.dumps(args)[:80])
+                except TypeError:
+                    details.append(str(args)[:80])
+            elif args:
+                details.append(str(args)[:80])
+
+            detail = " ".join(filter(None, details))
+        else:
+            detail = str(call)
+
+        summary = f"{arrow} {name}"
+        if detail:
+            summary = f"{summary} {detail}"
+
+        return summary.strip()
 
     def _get_context_snapshot(self) -> ContextSnapshot:
         """

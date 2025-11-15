@@ -114,6 +114,7 @@ class AgentSnapshot:
     files_created: List[str] = field(default_factory=list)
     files_modified: List[str] = field(default_factory=list)
     tool_calls_count: int = 0
+    recent_tool_calls: List[str] = field(default_factory=list)
 
     # Error
     error_message: Optional[str] = None
