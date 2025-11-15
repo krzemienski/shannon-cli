@@ -1,877 +1,496 @@
 """
-Shannon V3.1 Dashboard - Rendering Engine
+Rendering layer for the Shannon V3.1 interactive dashboard.
 
-Four-layer renderer system for interactive dashboard:
-- Layer 1: Session overview with progress and metrics
-- Layer 2: Agent list table with selection
-- Layer 3: Agent detail with 4-panel layout
-- Layer 4: Message stream with virtual scrolling
-
-Author: Shannon Framework
-Version: 3.1.0
+Provides four Rich-based renderers:
+    - Layer 1: Session overview
+    - Layer 2: Agent list/table
+    - Layer 3: Agent detail (context + tools)
+    - Layer 4: Message stream with virtual scrolling
 """
 
-from typing import Dict, List, Optional, Tuple
-from datetime import datetime
+from __future__ import annotations
 
+import json
+from datetime import datetime
+from typing import Dict, List, Optional, Tuple
+
+from rich.console import Group
+from rich.layout import Layout
 from rich.panel import Panel
 from rich.table import Table
-from rich.layout import Layout
 from rich.text import Text
-from rich.console import Group
-from rich.padding import Padding
-from rich.align import Align
 
 from .models import (
+    AgentSnapshot,
+    ContextSnapshot,
     DashboardSnapshot,
     DashboardUIState,
-    AgentSnapshot,
     MessageEntry,
-    SessionSnapshot,
-    ContextSnapshot,
-    MessageHistory
 )
 
 
 class Layer1Renderer:
-    """
-    Session overview renderer.
+    """Render Layer 1: Session overview."""
 
-    Shows goal, phase/wave, progress, agent summary, metrics, and controls.
-    Border color reflects session state.
-    """
+    PROGRESS_CHARS = 10
+    WAIT_THRESHOLD_SECONDS = 5.0
 
     def render(self, snapshot: DashboardSnapshot, ui_state: DashboardUIState) -> Panel:
-        """Render session overview panel."""
-        lines: List[Text] = []
+        session = snapshot.session
+        sections: List[str] = []
 
-        # Goal (if north_star set)
-        if snapshot.session.north_star_goal:
-            goal_text = Text()
-            goal_text.append("🎯 ", style="bold yellow")
-            goal_text.append(snapshot.session.north_star_goal, style="bold white")
-            lines.append(goal_text)
-            lines.append(Text())  # Blank line
+        if session.north_star_goal:
+            sections.append(f"🎯 [bold]{session.north_star_goal}[/bold]")
+            sections.append("")
 
-        # Phase/Wave
-        phase_line = self._render_phase_wave(snapshot)
-        lines.append(phase_line)
-        lines.append(Text())  # Blank line
+        sections.append(self._phase_line(session))
+        sections.append("")
+        sections.append(self._progress_line(session))
+        sections.append("")
 
-        # Progress bar
-        progress_line = self._render_progress(snapshot)
-        lines.append(progress_line)
-        lines.append(Text())  # Blank line
+        if session.agents_total:
+            sections.append(self._agent_summary_line(session))
+            sections.append("")
 
-        # Agent summary (if wave execution)
-        if snapshot.session.current_wave is not None:
-            agent_line = self._render_agent_summary(snapshot)
-            lines.append(agent_line)
-            lines.append(Text())  # Blank line
+        sections.append(self._current_operation_line(session))
+        sections.append("")
+        sections.append(self._metrics_line(session))
+        sections.append("")
+        sections.append(self._controls_line(snapshot))
 
-        # Metrics
-        metrics_line = self._render_metrics(snapshot)
-        lines.append(metrics_line)
-        lines.append(Text())  # Blank line
+        body = "\n".join(section for section in sections if section is not None)
 
-        # Current operation
-        operation_line = self._render_current_operation(snapshot)
-        lines.append(operation_line)
-        lines.append(Text())  # Blank line
-
-        # Controls
-        controls_line = self._render_controls()
-        lines.append(controls_line)
-
-        # Determine border color based on state
-        border_style = self._get_border_style(snapshot)
-
-        # Create panel
-        content = Group(*lines)
         return Panel(
-            content,
-            title="[bold]Shannon V3.1 Dashboard[/bold]",
-            border_style=border_style,
-            padding=(1, 2),
+            body,
+            title=f"[bold]Shannon V3.1 - {session.command_name}[/bold]",
+            border_style=self._border_style(session),
+            padding=(0, 1),
         )
 
-    def _render_phase_wave(self, snapshot: DashboardSnapshot) -> Text:
-        """Render phase/wave information."""
-        text = Text()
+    def _phase_line(self, session) -> str:
+        if session.wave_number and session.total_waves:
+            return (
+                f"[cyan]Wave {session.wave_number}/{session.total_waves}: "
+                f"{session.current_phase}[/cyan]"
+            )
 
-        if snapshot.session.current_wave is not None:
-            # Wave execution
-            current = snapshot.session.current_wave
-            total = snapshot.session.total_waves or 0
-            wave_name = snapshot.session.wave_name or "Unknown"
+        return f"[cyan]{session.current_phase}[/cyan]"
 
-            text.append(f"Wave {current}/{total}: ", style="cyan")
-            text.append(wave_name, style="bold white")
-        else:
-            # Phase execution
-            phase = snapshot.session.current_phase or "Unknown"
-            text.append("Phase: ", style="cyan")
-            text.append(phase, style="bold white")
+    def _progress_line(self, session) -> str:
+        progress = max(0.0, min(1.0, session.overall_progress or 0.0))
+        filled = int(progress * self.PROGRESS_CHARS)
+        bar = "▓" * filled + "░" * (self.PROGRESS_CHARS - filled)
+        return f"{bar} {progress:.0%}"
 
-        return text
+    def _agent_summary_line(self, session) -> str:
+        parts = [
+            f"[cyan]{session.agents_active} active[/cyan]",
+            f"[green]{session.agents_complete} complete[/green]",
+            f"[yellow]{session.agents_waiting} waiting[/yellow]",
+        ]
+        if session.agents_failed:
+            parts.append(f"[red]{session.agents_failed} failed[/red]")
+        return "Agents: " + ", ".join(parts)
 
-    def _render_progress(self, snapshot: DashboardSnapshot) -> Text:
-        """Render progress bar."""
-        text = Text()
+    def _current_operation_line(self, session) -> str:
+        operation = session.current_operation or "Processing..."
+        wait_seconds: Optional[float] = None
+        if session.last_activity_time:
+            wait_seconds = (datetime.now() - session.last_activity_time).total_seconds()
 
-        completed = snapshot.session.tasks_completed
-        total = snapshot.session.tasks_total
+        if wait_seconds and wait_seconds > self.WAIT_THRESHOLD_SECONDS:
+            return f"[yellow]⏳ {operation} ({wait_seconds:.0f}s)[/yellow]"
 
-        if total > 0:
-            percentage = int((completed / total) * 100)
-            bar_width = 10
-            filled = int((completed / total) * bar_width)
-            empty = bar_width - filled
+        if session.agents_active > 0:
+            return f"[cyan]⚙  {operation}[/cyan]"
 
-            # Progress bar
-            text.append("▓" * filled, style="bold green")
-            text.append("░" * empty, style="dim white")
-            text.append(f" {percentage}% ", style="bold white")
-            text.append(f"({completed}/{total} tasks)", style="cyan")
-        else:
-            text.append("No tasks yet", style="dim white")
+        if session.agents_complete and session.agents_complete == session.agents_total:
+            return f"[green]✓ {operation}[/green]"
 
-        return text
+        return f"[cyan]{operation}[/cyan]"
 
-    def _render_agent_summary(self, snapshot: DashboardSnapshot) -> Text:
-        """Render agent summary counts."""
-        text = Text()
-        text.append("Agents: ", style="bold white")
+    def _metrics_line(self, session) -> str:
+        cost = f"${session.total_cost_usd:.2f}"
+        tokens = (
+            f"{session.total_tokens / 1000:.1f}K"
+            if session.total_tokens >= 1000
+            else str(session.total_tokens)
+        )
+        duration = f"{session.elapsed_seconds:.0f}s"
+        messages = f"{session.message_count} msgs"
+        return f"[dim]{cost} | {tokens} | {duration} | {messages}[/dim]"
 
-        active = sum(1 for a in snapshot.agents if a.status == AgentState.ACTIVE)
-        complete = sum(1 for a in snapshot.agents if a.status == AgentState.COMPLETE)
-        waiting = sum(1 for a in snapshot.agents if a.status == AgentState.WAITING_API)
-        failed = sum(1 for a in snapshot.agents if a.status == AgentState.FAILED)
+    def _controls_line(self, snapshot: DashboardSnapshot) -> str:
+        if len(snapshot.agents) > 1:
+            return "[dim][↵] Agents | [q] Quit | [h] Help[/dim]"
+        return "[dim][↵] Details | [q] Quit | [h] Help[/dim]"
 
-        parts = []
-        if active > 0:
-            parts.append((f"{active} active", "cyan"))
-        if complete > 0:
-            parts.append((f"{complete} complete", "green"))
-        if waiting > 0:
-            parts.append((f"{waiting} waiting", "yellow"))
-        if failed > 0:
-            parts.append((f"{failed} failed", "red"))
-
-        for i, (part, style) in enumerate(parts):
-            if i > 0:
-                text.append(", ", style="dim white")
-            text.append(part, style=style)
-
-        return text
-
-    def _render_metrics(self, snapshot: DashboardSnapshot) -> Text:
-        """Render session metrics."""
-        text = Text()
-
-        # Cost
-        cost = snapshot.session.total_cost
-        text.append(f"${cost:.2f}", style="bold green")
-        text.append(" | ", style="dim white")
-
-        # Tokens
-        tokens = snapshot.session.total_tokens
-        if tokens >= 1000:
-            text.append(f"{tokens / 1000:.1f}K tokens", style="cyan")
-        else:
-            text.append(f"{tokens} tokens", style="cyan")
-        text.append(" | ", style="dim white")
-
-        # Duration
-        duration_sec = snapshot.session.duration_seconds
-        if duration_sec >= 3600:
-            hours = int(duration_sec // 3600)
-            minutes = int((duration_sec % 3600) // 60)
-            text.append(f"{hours}h {minutes}m", style="yellow")
-        elif duration_sec >= 60:
-            minutes = int(duration_sec // 60)
-            seconds = int(duration_sec % 60)
-            text.append(f"{minutes}m {seconds}s", style="yellow")
-        else:
-            text.append(f"{int(duration_sec)}s", style="yellow")
-        text.append(" | ", style="dim white")
-
-        # Message count
-        msg_count = snapshot.session.message_count
-        text.append(f"{msg_count} msgs", style="magenta")
-
-        return text
-
-    def _render_current_operation(self, snapshot: DashboardSnapshot) -> Text:
-        """Render current operation status."""
-        text = Text()
-
-        # Find first non-complete agent
-        active_agent = None
-        for agent in snapshot.agents:
-            if agent.state != AgentState.COMPLETE:
-                active_agent = agent
-                break
-
-        if active_agent:
-            if active_agent.status == AgentState.WAITING_API:
-                # Waiting for API
-                wait_time = active_agent.wait_duration_seconds or 0
-                text.append("⏳ ", style="yellow")
-                text.append(f"Waiting for Agent #{active_agent.agent_id}", style="bold yellow")
-                text.append(f" ({int(wait_time)}s)", style="dim yellow")
-            elif active_agent.status == AgentState.ACTIVE:
-                # Active work
-                text.append("⚙ ", style="cyan")
-                text.append(active_agent.current_operation or "Working...", style="bold cyan")
-            elif active_agent.status == AgentState.FAILED:
-                # Failed
-                text.append("❌ ", style="red")
-                text.append(f"Agent #{active_agent.agent_id} failed", style="bold red")
-            else:
-                # Starting
-                text.append("▶ ", style="green")
-                text.append("Starting...", style="bold green")
-        else:
-            # All complete
-            text.append("✓ ", style="green")
-            text.append("All tasks complete", style="bold green")
-
-        return text
-
-    def _render_controls(self) -> Text:
-        """Render keyboard controls."""
-        text = Text()
-        text.append("[↵] Agents", style="bold cyan")
-        text.append(" | ", style="dim white")
-        text.append("[q] Quit", style="bold red")
-        text.append(" | ", style="dim white")
-        text.append("[h] Help", style="bold yellow")
-        return text
-
-    def _get_border_style(self, snapshot: DashboardSnapshot) -> str:
-        """Determine border color based on session state."""
-        # Check for any failed agents
-        if any(a.status == AgentState.FAILED for a in snapshot.agents):
+    def _border_style(self, session) -> str:
+        if session.agents_failed > 0:
             return "red"
-
-        # Check if all complete
-        if all(a.status == AgentState.COMPLETE for a in snapshot.agents) and snapshot.agents:
+        if session.agents_total and session.agents_complete == session.agents_total:
             return "green"
-
-        # Check if any waiting
-        if any(a.status == AgentState.WAITING_API for a in snapshot.agents):
+        if session.agents_waiting > session.agents_active:
             return "yellow"
-
-        # Active work
-        return "cyan"
+        if session.agents_active > 0:
+            return "cyan"
+        return "green"
 
 
 class Layer2Renderer:
-    """
-    Agent list table renderer.
+    """Render Layer 2: Agent list with selection."""
 
-    Shows all agents with progress, state, time, and blocking status.
-    Highlights selected agent.
-    """
+    PROGRESS_CHARS = 10
 
     def render(self, snapshot: DashboardSnapshot, ui_state: DashboardUIState) -> Panel:
-        """Render agent list table panel."""
-        # Create table
+        agents = snapshot.agents
+        if not agents:
+            return Panel(
+                "[dim]No agents running[/dim]",
+                title="[bold]Agents[/bold]",
+                border_style="dim",
+                padding=(0, 1),
+            )
+
+        selected_index = min(
+            max(ui_state.agent_selection_index, 0), max(len(agents) - 1, 0)
+        )
+
+        id_lookup = {agent.agent_id: agent.agent_number for agent in agents}
+
         table = Table(
             show_header=True,
             header_style="bold cyan",
-            border_style="dim white",
+            box=None,
+            pad_edge=False,
             expand=True,
         )
-
-        # Define columns
-        table.add_column("#", justify="right", width=4)
+        table.add_column("#", justify="right", width=3)
         table.add_column("Type", width=20)
-        table.add_column("Progress", width=15)
-        table.add_column("State", width=15)
-        table.add_column("Time", width=10)
-        table.add_column("Blocking", width=20)
+        table.add_column("Progress", width=18)
+        table.add_column("State", width=14)
+        table.add_column("Time", justify="right", width=8)
+        table.add_column("Blocking", width=12)
 
-        # Add agent rows
-        for agent in snapshot.agents:
-            is_selected = (agent.agent_id == ui_state.selected_agent_id)
-            self._add_agent_row(table, agent, is_selected)
+        for idx, agent in enumerate(agents):
+            row_style = "bold white on blue" if idx == selected_index else None
+            table.add_row(
+                str(agent.agent_number),
+                agent.agent_type,
+                self._progress_bar(agent.progress),
+                self._state_label(agent),
+                self._time_label(agent),
+                self._blocking_label(agent, id_lookup),
+                style=row_style,
+            )
 
-        # Footer
-        footer = self._render_footer(ui_state)
+        footer_lines = [
+            self._selected_agent_line(agents[selected_index]),
+            "[dim][1-9] Select | [↵] Detail | [Esc] Back | [h] Help[/dim]",
+        ]
 
-        # Combine table and footer
-        content = Group(table, Text(), footer)
-
-        return Panel(
-            content,
-            title="[bold]Agent List[/bold]",
-            border_style="cyan",
-            padding=(1, 2),
+        wave_info = (
+            f"Wave {snapshot.session.wave_number}"
+            if snapshot.session.wave_number
+            else "Agents"
         )
 
-    def _add_agent_row(self, table: Table, agent: AgentSnapshot, is_selected: bool) -> None:
-        """Add a single agent row to the table."""
-        # Style based on selection
-        if is_selected:
-            style = "bold white on blue"
-        else:
-            style = ""
+        return Panel(
+            Group(table, Text("\n".join(footer_lines))),
+            title=f"[bold]{wave_info}[/bold]",
+            border_style="cyan",
+            padding=(0, 1),
+        )
 
-        # Agent ID
-        agent_id = Text(f"#{agent.agent_id}", style=style)
+    def _progress_bar(self, value: float) -> str:
+        value = max(0.0, min(1.0, value))
+        filled = int(value * self.PROGRESS_CHARS)
+        return f"{'▓' * filled}{'░' * (self.PROGRESS_CHARS - filled)} {value:.0%}"
 
-        # Type/Name
-        agent_type = Text(agent.agent_type or "unknown", style=style)
+    def _state_label(self, agent: AgentSnapshot) -> str:
+        if agent.waiting_reason:
+            return f"[yellow]{agent.waiting_reason}[/yellow]"
 
-        # Progress bar
-        progress = self._render_progress_bar(agent.progress_percent, is_selected)
+        color_map = {
+            "pending": "dim",
+            "active": "cyan",
+            "complete": "green",
+            "failed": "red",
+        }
+        color = color_map.get(agent.status, "white")
+        return f"[{color}]{agent.status.upper()}[/{color}]"
 
-        # State
-        state = self._render_state(agent.state, is_selected)
+    def _time_label(self, agent: AgentSnapshot) -> str:
+        if agent.wait_duration_seconds:
+            return f"{agent.wait_duration_seconds:.0f}s"
+        if agent.elapsed_seconds >= 60:
+            minutes = agent.elapsed_seconds // 60
+            return f"{minutes:.0f}m"
+        if agent.elapsed_seconds > 0:
+            return f"{agent.elapsed_seconds:.0f}s"
+        return "-"
 
-        # Time
-        time_text = Text(self._format_time(agent.duration_seconds), style=style)
+    def _blocking_label(
+        self, agent: AgentSnapshot, id_lookup: Dict[str, int]
+    ) -> str:
+        if agent.blocking_agent_id and agent.blocking_agent_id in id_lookup:
+            return f"#{id_lookup[agent.blocking_agent_id]}"
+        return "-"
 
-        # Blocking info
-        blocking = self._render_blocking(agent, is_selected)
-
-        table.add_row(agent_id, agent_type, progress, state, time_text, blocking)
-
-    def _render_progress_bar(self, percent: float, is_selected: bool) -> Text:
-        """Render progress bar for agent."""
-        text = Text()
-
-        bar_width = 5
-        filled = int((percent / 100) * bar_width)
-        empty = bar_width - filled
-
-        if is_selected:
-            text.append("▓" * filled, style="bold green on blue")
-            text.append("░" * empty, style="dim white on blue")
-            text.append(f" {int(percent)}%", style="bold white on blue")
-        else:
-            text.append("▓" * filled, style="green")
-            text.append("░" * empty, style="dim white")
-            text.append(f" {int(percent)}%", style="white")
-
-        return text
-
-    def _render_state(self, state: AgentSnapshot, is_selected: bool) -> Text:
-        """Render agent state with color."""
-        text = Text()
-
-        state_str = state.value.upper()
-
-        if is_selected:
-            # Override color when selected
-            text.append(state_str, style="bold white on blue")
-        else:
-            # Normal state colors
-            if state == AgentState.WAITING_API:
-                text.append(state_str, style="yellow")
-            elif state == AgentState.ACTIVE:
-                text.append(state_str, style="cyan")
-            elif state == AgentState.COMPLETE:
-                text.append(state_str, style="green")
-            elif state == AgentState.FAILED:
-                text.append(state_str, style="red")
-            else:
-                text.append(state_str, style="white")
-
-        return text
-
-    def _render_blocking(self, agent: AgentSnapshot, is_selected: bool) -> Text:
-        """Render blocking information."""
-        text = Text()
-
-        if agent.blocking_reason:
-            style = "bold white on blue" if is_selected else "yellow"
-            text.append(agent.blocking_reason, style=style)
-        else:
-            style = "bold white on blue" if is_selected else "dim white"
-            text.append("-", style=style)
-
-        return text
-
-    def _format_time(self, seconds: float) -> str:
-        """Format duration as string."""
-        if seconds >= 3600:
-            hours = int(seconds // 3600)
-            minutes = int((seconds % 3600) // 60)
-            return f"{hours}h {minutes}m"
-        elif seconds >= 60:
-            minutes = int(seconds // 60)
-            secs = int(seconds % 60)
-            return f"{minutes}m {secs}s"
-        else:
-            return f"{int(seconds)}s"
-
-    def _render_footer(self, ui_state: DashboardUIState) -> Text:
-        """Render footer with controls."""
-        text = Text()
-
-        if ui_state.selected_agent_id is not None:
-            text.append(f"Selected: Agent #{ui_state.selected_agent_id}", style="bold white")
-            text.append(" | ", style="dim white")
-
-        text.append("[1-9] Select", style="cyan")
-        text.append(" | ", style="dim white")
-        text.append("[↵] Detail", style="cyan")
-        text.append(" | ", style="dim white")
-        text.append("[Esc] Back", style="yellow")
-
-        return text
+    def _selected_agent_line(self, agent: AgentSnapshot) -> str:
+        line = f"Selected: Agent #{agent.agent_number} ({agent.agent_type})"
+        if agent.waiting_reason:
+            line += f" · {agent.waiting_reason}"
+        elif agent.current_operation:
+            line += f" · {agent.current_operation}"
+        return line
 
 
 class Layer3Renderer:
-    """
-    Agent detail renderer with 4-panel layout.
+    """Render Layer 3: Agent detail view."""
 
-    Panels:
-    - Top: Agent info (always visible)
-    - Left: Context (toggleable with 'c')
-    - Right: Tool history (toggleable with 't')
-    - Bottom: Current operation and controls (always visible)
-    """
-
-    def render(self, snapshot: DashboardSnapshot, ui_state: DashboardUIState) -> Layout:
-        """Render agent detail layout with 4 panels."""
-        # Find selected agent
-        agent = self._find_agent(snapshot, ui_state.selected_agent_id)
+    def render(self, snapshot: DashboardSnapshot, ui_state: DashboardUIState):
+        agent = ui_state.get_focused_agent(snapshot)
         if not agent:
-            # Fallback if agent not found
-            return self._render_error()
+            return Panel("[red]No agent selected[/red]", border_style="red")
 
-        # Create layout
         layout = Layout()
-
-        # Split into top and bottom
         layout.split_column(
-            Layout(name="top", size=6),
+            Layout(name="info", size=5),
             Layout(name="middle"),
-            Layout(name="bottom", size=4),
+            Layout(name="operation", size=5),
         )
 
-        # Render top panel (agent info)
-        layout["top"].update(self._render_agent_info(agent))
+        layout["info"].update(self._render_agent_info(agent))
 
-        # Render middle section (context + tool history)
-        layout["middle"].update(self._render_middle_section(agent, ui_state))
+        middle = layout["middle"]
+        if ui_state.show_context_panel and ui_state.show_tool_history:
+            middle.split_row(
+                Layout(name="context", ratio=3),
+                Layout(name="tools", ratio=7),
+            )
+            middle["context"].update(self._render_context_panel(snapshot.context))
+            middle["tools"].update(self._render_tool_history(agent))
+        elif ui_state.show_context_panel:
+            middle.update(self._render_context_panel(snapshot.context))
+        elif ui_state.show_tool_history:
+            middle.update(self._render_tool_history(agent))
+        else:
+            middle.update(
+                Panel(
+                    "[dim]Panels hidden. Press [c] or [t] to toggle.[/dim]",
+                    border_style="dim",
+                )
+            )
 
-        # Render bottom panel (current operation)
-        layout["bottom"].update(self._render_current_operation(agent))
-
+        layout["operation"].update(self._render_operation_panel(agent))
         return layout
-
-    def _find_agent(self, snapshot: DashboardSnapshot, agent_id: Optional[int]) -> Optional[AgentSnapshot]:
-        """Find agent by ID."""
-        if agent_id is None:
-            return None
-
-        for agent in snapshot.agents:
-            if agent.agent_id == agent_id:
-                return agent
-
-        return None
 
     def _render_agent_info(self, agent: AgentSnapshot) -> Panel:
-        """Render top panel with agent information."""
-        lines: List[Text] = []
+        lines = [
+            f"[bold]Agent #{agent.agent_number}: {agent.agent_type}[/bold]",
+            f"Task: {agent.task_description}",
+            f"Status: {agent.status.upper()}",
+            self._progress_bar(agent.progress),
+        ]
+        return Panel("\n".join(lines), border_style="cyan", padding=(0, 1))
 
-        # Agent ID and type
-        title_line = Text()
-        title_line.append(f"Agent #{agent.agent_id}: ", style="bold cyan")
-        title_line.append(agent.agent_type or "unknown", style="bold white")
-        lines.append(title_line)
+    def _render_context_panel(self, context: ContextSnapshot) -> Panel:
+        lines: List[str] = []
 
-        # Task
-        if agent.current_task:
-            task_line = Text()
-            task_line.append("Task: ", style="cyan")
-            task_line.append(agent.current_task, style="white")
-            lines.append(task_line)
+        lines.append(f"📁 Codebase: {context.codebase_files_loaded} files")
+        for path in context.codebase_file_list[:5]:
+            lines.append(f"   {path}")
+        if len(context.codebase_file_list) > 5:
+            lines.append(f"   ... {len(context.codebase_file_list) - 5} more")
+        lines.append("")
 
-        # Status
-        status_line = Text()
-        status_line.append("Status: ", style="cyan")
-        status_text = agent.state.value.upper()
+        lines.append(f"🧠 Memory: {context.memories_active} active")
+        for mem in context.memory_list[:5]:
+            lines.append(f"   {mem}")
+        if len(context.memory_list) > 5:
+            lines.append(f"   ... {len(context.memory_list) - 5} more")
+        lines.append("")
 
-        if agent.status == AgentState.WAITING_API:
-            wait_time = agent.wait_duration_seconds or 0
-            status_line.append(f"{status_text} ({wait_time:.1f}s)", style="yellow")
-        elif agent.status == AgentState.ACTIVE:
-            status_line.append(status_text, style="cyan")
-        elif agent.status == AgentState.COMPLETE:
-            status_line.append(status_text, style="green")
-        elif agent.status == AgentState.FAILED:
-            status_line.append(status_text, style="red")
-        else:
-            status_line.append(status_text, style="white")
+        lines.append(f"🔧 Tools: {context.tools_available} available")
+        for tool in context.tool_list[:5]:
+            lines.append(f"   {tool}")
+        if len(context.tool_list) > 5:
+            lines.append(f"   ... {len(context.tool_list) - 5} more")
+        lines.append("")
 
-        lines.append(status_line)
+        lines.append(f"🔌 MCP: {context.mcp_servers_connected} connected")
+        for server in context.mcp_server_list[:5]:
+            icon = "✅" if server.status == "connected" else "❌"
+            lines.append(f"   {server.name} {icon} ({server.tools_provided} tools)")
 
-        # Progress
-        progress_line = Text()
-        progress_line.append("Progress: ", style="cyan")
-
-        bar_width = 10
-        percent = agent.progress_percent
-        filled = int((percent / 100) * bar_width)
-        empty = bar_width - filled
-
-        progress_line.append("▓" * filled, style="bold green")
-        progress_line.append("░" * empty, style="dim white")
-        progress_line.append(f" {int(percent)}%", style="bold white")
-
-        lines.append(progress_line)
-
-        content = Group(*lines)
-        return Panel(content, border_style="cyan", padding=(0, 1))
-
-    def _render_middle_section(self, agent: AgentSnapshot, ui_state: DashboardUIState) -> Layout:
-        """Render middle section with context and tool history."""
-        layout = Layout()
-
-        show_context = ui_state.show_context
-        show_tools = ui_state.show_tool_history
-
-        if show_context and show_tools:
-            # Show both panels
-            layout.split_row(
-                Layout(self._render_context_panel(agent), name="context", ratio=30),
-                Layout(self._render_tool_history_panel(agent), name="tools", ratio=70),
-            )
-        elif show_context:
-            # Only context
-            layout.update(self._render_context_panel(agent))
-        elif show_tools:
-            # Only tools
-            layout.update(self._render_tool_history_panel(agent))
-        else:
-            # Neither - show placeholder
-            layout.update(Panel(
-                Align.center("[Press 'c' for context, 't' for tool history]", vertical="middle"),
-                border_style="dim white"
-            ))
-
-        return layout
-
-    def _render_context_panel(self, agent: AgentSnapshot) -> Panel:
-        """Render left panel with context information."""
-        lines: List[Text] = []
-
-        # Codebase files
-        lines.append(Text("📁 Codebase:", style="bold yellow"))
-        if agent.codebase_files:
-            lines.append(Text(f"  {len(agent.codebase_files)} files", style="cyan"))
-            for file in agent.codebase_files[:5]:  # Show first 5
-                lines.append(Text(f"  {file}", style="dim white"))
-            if len(agent.codebase_files) > 5:
-                lines.append(Text(f"  ... and {len(agent.codebase_files) - 5} more", style="dim white"))
-        else:
-            lines.append(Text("  None", style="dim white"))
-
-        lines.append(Text())  # Blank line
-
-        # Memory
-        lines.append(Text("🧠 Memory:", style="bold yellow"))
-        if agent.memory_items:
-            lines.append(Text(f"  {len(agent.memory_items)} active", style="cyan"))
-            for memory in agent.memory_items[:3]:  # Show first 3
-                lines.append(Text(f"  {memory}", style="dim white"))
-            if len(agent.memory_items) > 3:
-                lines.append(Text(f"  ... and {len(agent.memory_items) - 3} more", style="dim white"))
-        else:
-            lines.append(Text("  None", style="dim white"))
-
-        lines.append(Text())  # Blank line
-
-        # Tools
-        lines.append(Text("🔧 Tools:", style="bold yellow"))
-        tool_count = agent.tool_count or 0
-        lines.append(Text(f"  {tool_count} available", style="cyan"))
-
-        lines.append(Text())  # Blank line
-
-        # MCP servers
-        lines.append(Text("🔌 MCP:", style="bold yellow"))
-        if agent.mcp_servers:
-            lines.append(Text(f"  {len(agent.mcp_servers)} connected", style="cyan"))
-            for server in agent.mcp_servers[:3]:  # Show first 3
-                lines.append(Text(f"  {server} ✅", style="green"))
-            if len(agent.mcp_servers) > 3:
-                lines.append(Text(f"  ... and {len(agent.mcp_servers) - 3} more", style="dim white"))
-        else:
-            lines.append(Text("  None", style="dim white"))
-
-        content = Group(*lines)
         return Panel(
-            content,
-            title="[bold]Context[/bold]",
-            border_style="yellow",
-            padding=(1, 1),
+            "\n".join(lines) if lines else "[dim]No context loaded[/dim]",
+            title="Context Loaded",
+            border_style="blue",
+            padding=(0, 1),
         )
 
-    def _render_tool_history_panel(self, agent: AgentSnapshot) -> Panel:
-        """Render right panel with tool call history."""
-        lines: List[Text] = []
-
+    def _render_tool_history(self, agent: AgentSnapshot) -> Panel:
         if agent.recent_tool_calls:
-            for call in agent.recent_tool_calls[-10:]:  # Show last 10
-                # Tool call line
-                call_line = Text()
-                call_line.append("→ ", style="yellow")
-                call_line.append(call.get("name", "unknown"), style="bold white")
-                call_line.append(f"({call.get('args', '')[:30]})", style="dim white")
-                duration = call.get("duration_ms", 0)
-                call_line.append(f" {duration / 1000:.1f}s", style="cyan")
-                lines.append(call_line)
-
-                # Result line
-                result_line = Text()
-                result_line.append("← ", style="cyan")
-                result_text = call.get("result", "")[:50]
-                result_line.append(result_text, style="dim white")
-                lines.append(result_line)
-
-                lines.append(Text())  # Blank line
-
-            # Total count
-            total = len(agent.recent_tool_calls)
-            if total > 10:
-                lines.append(Text(f"({total} calls total, showing last 10)", style="dim white"))
-            else:
-                lines.append(Text(f"({total} calls total)", style="dim white"))
+            body = "\n".join(agent.recent_tool_calls)
         else:
-            lines.append(Text("No tool calls yet", style="dim white"))
+            body = "[dim]No tool calls recorded[/dim]"
 
-        content = Group(*lines)
+        body += f"\n\n({agent.tool_calls_count} calls total)"
+
         return Panel(
-            content,
-            title="[bold]Tool History[/bold]",
+            body,
+            title="Tool Call History",
             border_style="yellow",
-            padding=(1, 1),
+            padding=(0, 1),
         )
 
-    def _render_current_operation(self, agent: AgentSnapshot) -> Panel:
-        """Render bottom panel with current operation."""
-        lines: List[Text] = []
-
-        # Current operation
-        if agent.status == AgentState.WAITING_API:
-            op_line = Text()
-            op_line.append("⏳ Waiting: ", style="bold yellow")
-            op_line.append("Claude API /v1/messages", style="white")
-            lines.append(op_line)
-
-            # Request size
-            req_line = Text()
-            req_line.append("Request: ", style="cyan")
-            tokens = agent.current_request_tokens or 0
-            req_line.append(f"{tokens / 1000:.0f}K tokens", style="white")
-            lines.append(req_line)
-
-            # Wait time
-            wait_line = Text()
-            wait_line.append("Time waiting: ", style="cyan")
-            wait_time = agent.wait_duration_seconds or 0
-            wait_line.append(f"{wait_time:.1f}s", style="yellow")
-            lines.append(wait_line)
+    def _render_operation_panel(self, agent: AgentSnapshot) -> Panel:
+        if agent.waiting_reason:
+            wait = (
+                f"{agent.wait_duration_seconds:.0f}s"
+                if agent.wait_duration_seconds
+                else "-"
+            )
+            lines = [
+                f"[yellow]⏳ Waiting: {agent.waiting_reason} ({wait})[/yellow]",
+                "[dim][Esc] Back | [1-9] Switch | [t] Tools | [c] Context[/dim]",
+            ]
+            border = "yellow"
         elif agent.current_operation:
-            op_line = Text()
-            op_line.append("⚙ ", style="cyan")
-            op_line.append(agent.current_operation, style="bold white")
-            lines.append(op_line)
+            lines = [
+                f"[green]⚙  {agent.current_operation}[/green]",
+                "[dim][Esc] Back | [↵] Messages | [1-9] Switch[/dim]",
+            ]
+            border = "green"
         else:
-            lines.append(Text("Ready", style="dim white"))
+            lines = [
+                "[cyan]Idle[/cyan]",
+                "[dim][Esc] Back | [↵] Messages | [1-9] Switch[/dim]",
+            ]
+            border = "cyan"
 
-        # Controls
-        controls_line = Text()
-        controls_line.append("[↵] Messages", style="cyan")
-        controls_line.append(" | ", style="dim white")
-        controls_line.append("[Esc] Agents", style="yellow")
-        controls_line.append(" | ", style="dim white")
-        controls_line.append("[1-9] Switch", style="cyan")
-        controls_line.append(" | ", style="dim white")
-        controls_line.append("[t] Tools", style="yellow")
-        controls_line.append(" | ", style="dim white")
-        controls_line.append("[c] Context", style="yellow")
-        lines.append(controls_line)
+        return Panel(
+            "\n".join(lines),
+            title="Current Operation",
+            border_style=border,
+            padding=(0, 1),
+        )
 
-        content = Group(*lines)
-        return Panel(content, border_style="cyan", padding=(0, 1))
-
-    def _render_error(self) -> Layout:
-        """Render error layout when agent not found."""
-        layout = Layout()
-        layout.update(Panel(
-            Align.center("Agent not found", vertical="middle"),
-            border_style="red"
-        ))
-        return layout
+    def _progress_bar(self, value: float) -> str:
+        value = max(0.0, min(1.0, value))
+        filled = int(value * Layer2Renderer.PROGRESS_CHARS)
+        return f"{'▓' * filled}{'░' * (Layer2Renderer.PROGRESS_CHARS - filled)} {value:.0%}"
 
 
 class Layer4Renderer:
-    """
-    Message stream renderer with virtual scrolling.
-
-    Shows conversation messages with:
-    - Syntax highlighting by role
-    - Thinking block expansion
-    - Truncation indicators
-    - Scroll position tracking
-    """
+    """Render Layer 4: Message stream with virtual scrolling."""
 
     def __init__(self):
-        """Initialize renderer with syntax cache."""
-        self._syntax_cache: Dict[int, Text] = {}
+        self._cache: Dict[Tuple[int, bool], Text] = {}
 
     def render(self, snapshot: DashboardSnapshot, ui_state: DashboardUIState) -> Panel:
-        """Render message stream panel with virtual scrolling."""
-        # Find selected agent
-        agent = self._find_agent(snapshot, ui_state.selected_agent_id)
-        if not agent or not agent.messages:
-            return self._render_empty()
+        history = snapshot.messages
+        if not history or not history.messages:
+            return Panel(
+                "[dim]No messages available[/dim]",
+                title="[bold]Message Stream[/bold]",
+                border_style="dim",
+                padding=(0, 1),
+            )
 
-        # Calculate viewport
-        total_messages = len(agent.messages)
-        viewport_start = ui_state.message_scroll_offset
-        viewport_size = 20  # Show 20 messages at a time
-        viewport_end = min(viewport_start + viewport_size, total_messages)
+        total = len(history.messages)
+        viewport = max(1, ui_state.viewport_height)
+        max_offset = max(0, total - viewport)
+        offset = min(max(0, ui_state.message_scroll_offset), max_offset)
 
-        # Render visible messages
-        lines: List[Text] = []
-        for i in range(viewport_start, viewport_end):
-            message = agent.messages[i]
-            message_text = self._render_message(message, i, ui_state)
-            lines.append(message_text)
-            lines.append(Text())  # Blank line between messages
+        visible = history.messages[offset : offset + viewport]
 
-        # Scroll indicator
-        scroll_indicator = self._render_scroll_indicator(
-            viewport_start, viewport_end, total_messages
-        )
-        lines.append(scroll_indicator)
-        lines.append(Text())  # Blank line
+        renderables: List[Text] = []
+        for msg in visible:
+            renderables.append(self._render_message(msg))
+            renderables.append(Text())
 
-        # Controls
-        controls = self._render_controls()
-        lines.append(controls)
+        renderables.append(self._footer_text(offset, viewport, total))
+        content = Group(*renderables)
 
-        content = Group(*lines)
-        return Panel(
-            content,
-            title="[bold]Message Stream[/bold]",
-            border_style="cyan",
-            padding=(1, 2),
-        )
-
-    def _find_agent(self, snapshot: DashboardSnapshot, agent_id: Optional[int]) -> Optional[AgentSnapshot]:
-        """Find agent by ID."""
-        if agent_id is None:
-            return None
-
-        for agent in snapshot.agents:
-            if agent.agent_id == agent_id:
-                return agent
-
-        return None
-
-    def _render_message(self, message: MessageEntry, index: int, ui_state: DashboardUIState) -> Text:
-        """Render a single message with syntax highlighting."""
-        # Check cache
-        if index in self._syntax_cache:
-            return self._syntax_cache[index]
-
-        text = Text()
-
-        # Role prefix with color
-        role = message.role.upper()
-        if role == "USER":
-            text.append("→ USER: ", style="bold blue")
-        elif role == "ASSISTANT":
-            text.append("← ASSISTANT: ", style="bold green")
-        elif role.startswith("TOOL_USE"):
-            tool_name = message.content[:50] if message.content else ""
-            text.append(f"→ TOOL_USE: {tool_name}", style="bold yellow")
-            self._syntax_cache[index] = text
-            return text
-        elif role.startswith("TOOL_RESULT"):
-            text.append("← TOOL_RESULT: ", style="bold cyan")
+        agent = ui_state.get_focused_agent(snapshot)
+        if agent:
+            title = f"[bold]Messages: Agent #{agent.agent_number} ({agent.agent_type})[/bold]"
         else:
-            text.append(f"{role}: ", style="bold white")
+            title = "[bold]Message Stream[/bold]"
 
-        # Content handling
-        content = message.content or ""
+        return Panel(content, title=title, border_style="cyan", padding=(0, 1))
 
-        # Check for thinking blocks
-        if message.is_thinking:
-            line_count = content.count("\n") + 1
-            is_expanded = index in ui_state.expanded_message_ids
+    def _render_message(self, msg: MessageEntry) -> Text:
+        cache_key = (msg.index, msg.is_thinking and msg.thinking_expanded)
+        if cache_key in self._cache:
+            return self._cache[cache_key]
 
-            if is_expanded:
-                # Show full thinking content
-                text.append("\n[thinking]\n", style="dim yellow")
-                text.append(content[:500], style="dim white")  # Limit to 500 chars
-                if len(content) > 500:
-                    text.append("\n... [truncated]", style="dim yellow")
-                text.append("\n[/thinking]", style="dim yellow")
-            else:
-                # Show collapsed indicator
-                text.append(f"[thinking] {line_count} lines ", style="dim yellow")
-                text.append("(press Space to expand)", style="dim cyan")
+        text = Text()
+        prefix, style = self._prefix_for_role(msg)
+        text.append(prefix, style=style)
+
+        if msg.is_thinking:
+            text.append(self._format_thinking(msg), style="dim")
+        elif msg.role == "tool_use":
+            text.append(self._format_tool_use(msg), style="white")
+        elif msg.role == "tool_result":
+            text.append(self._format_tool_result(msg), style="white")
         else:
-            # Regular content
-            if len(content) > 200:
-                # Truncated
-                text.append(content[:200], style="white")
-                text.append(" ... ", style="dim white")
-                text.append("[truncated - press Enter to see full]", style="dim cyan")
-            else:
-                # Full content
-                text.append(content, style="white")
+            text.append(self._format_content(msg), style="white")
 
-        # Cache result
-        self._syntax_cache[index] = text
+        if not msg.is_thinking:
+            self._cache[cache_key] = text
+
         return text
 
-    def _render_scroll_indicator(self, start: int, end: int, total: int) -> Text:
-        """Render scroll position indicator."""
+    def _prefix_for_role(self, msg: MessageEntry) -> Tuple[str, str]:
+        if msg.role == "user":
+            return "→ USER: ", "bold blue"
+        if msg.role == "assistant" and msg.is_thinking:
+            return "← ASSISTANT [thinking]: ", "dim"
+        if msg.role == "assistant":
+            return "← ASSISTANT: ", "bold green"
+        if msg.role == "tool_use":
+            return f"→ TOOL_USE: {msg.tool_name or 'unknown'} ", "bold yellow"
+        if msg.role == "tool_result":
+            return "← TOOL_RESULT: ", "bold cyan"
+        return "→ ", "white"
+
+    def _format_content(self, msg: MessageEntry) -> str:
+        content = msg.content_preview if msg.is_truncated else msg.content
+        if msg.is_truncated:
+            content += "\n[dim][truncated - press Enter to expand][/dim]"
+        return content
+
+    def _format_tool_use(self, msg: MessageEntry) -> str:
+        params = ""
+        if msg.tool_params:
+            params = f"\n[dim]{json.dumps(msg.tool_params, indent=2)[:400]}[/dim]"
+        base = msg.content_preview if msg.is_truncated else msg.content
+        if msg.is_truncated:
+            base += "\n[dim][truncated - press Enter to expand][/dim]"
+        return f"{base}{params}"
+
+    def _format_tool_result(self, msg: MessageEntry) -> str:
+        content = msg.content_preview if msg.is_truncated else msg.content
+        if msg.is_truncated:
+            content += "\n[dim][truncated - press Enter to expand][/dim]"
+        return content
+
+    def _format_thinking(self, msg: MessageEntry) -> str:
+        if msg.thinking_expanded:
+            return msg.content
+        line_count = msg.content.count("\n") + 1
+        return f"{line_count} lines (press Space to expand)"
+
+    def _footer_text(self, offset: int, viewport: int, total: int) -> Text:
         text = Text()
-        text.append(f"[Message {start + 1}-{end} of {total}]", style="dim cyan")
-
-        if start > 0:
-            text.append(" ↑ More above", style="yellow")
-        if end < total:
-            text.append(" ↓ More below", style="yellow")
-
+        text.append(
+            f"[dim]Message {offset + 1}-{min(offset + viewport, total)} of {total}[/dim]\n"
+        )
+        text.append("[dim][↑↓] Scroll | [Enter] Expand | [Esc] Back | [1-9] Switch[/dim]")
         return text
 
-    def _render_controls(self) -> Text:
-        """Render keyboard controls."""
-        text = Text()
-        text.append("[↑↓] Scroll", style="cyan")
-        text.append(" | ", style="dim white")
-        text.append("[Enter] Expand", style="cyan")
-        text.append(" | ", style="dim white")
-        text.append("[Space] Toggle thinking", style="yellow")
-        text.append(" | ", style="dim white")
-        text.append("[Esc] Back", style="yellow")
-        text.append(" | ", style="dim white")
-        text.append("[1-9] Switch", style="cyan")
-        return text
-
-    def _render_empty(self) -> Panel:
-        """Render empty state when no messages."""
-        content = Align.center(
-            "No messages yet",
-            vertical="middle"
-        )
-        return Panel(
-            content,
-            title="[bold]Message Stream[/bold]",
-            border_style="dim white",
-            padding=(5, 2),
-        )

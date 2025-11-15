@@ -160,6 +160,13 @@ class SessionManager(ISessionStore):
                 'status': 'active'
             }
 
+        # Ensure required keys exist for dashboard usage
+        self.metadata.setdefault('command', 'unknown')
+        self.metadata.setdefault('phase', 'Initializing')
+        self.metadata.setdefault('goal', None)
+        self.metadata.setdefault('wave_number', None)
+        self.metadata.setdefault('total_waves', None)
+
         # Save metadata
         self._save_metadata()
 
@@ -324,6 +331,38 @@ class SessionManager(ISessionStore):
             ...     data = session.read_memory('analysis')
         """
         return (self.session_dir / f"{key}.json").exists()
+
+    def update_session_metadata(self, **fields: Any) -> None:
+        """
+        Update session metadata fields (e.g., command, goal, phase).
+
+        Args:
+            fields: Key/value pairs to merge into metadata.
+        """
+        if not fields:
+            return
+
+        for key, value in fields.items():
+            self.metadata[key] = value
+
+        self.metadata['updated_at'] = datetime.now().isoformat()
+        self._save_metadata()
+
+    def get_current_session(self) -> Dict[str, Any]:
+        """
+        Return current session metadata snapshot for dashboard consumption.
+
+        Returns:
+            Dictionary containing session_id, command, goal, phase, wave info.
+        """
+        return {
+            'session_id': self.session_id,
+            'command': self.metadata.get('command', 'unknown'),
+            'goal': self.metadata.get('goal'),
+            'phase': self.metadata.get('phase', 'Initializing'),
+            'wave_number': self.metadata.get('wave_number'),
+            'total_waves': self.metadata.get('total_waves'),
+        }
 
     def clear_all(self) -> None:
         """
