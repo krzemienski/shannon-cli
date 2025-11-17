@@ -111,7 +111,7 @@ def do_command(
                     
                     # Emit execution:started event (colon-separated)
                     await dashboard_client.emit_event('execution:started', {
-                        'task_name': task,
+                        'task': task,  # Dashboard expects 'task' not 'task_name'
                         'session_id': generated_session_id,
                         'timestamp': datetime.now().isoformat()
                     })
