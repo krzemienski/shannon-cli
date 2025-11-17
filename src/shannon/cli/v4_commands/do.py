@@ -109,8 +109,8 @@ def do_command(
                     console.print("[dim]✓ Dashboard connected[/dim]")
                     console.print(f"[dim]  Open: http://localhost:5173 (session: {generated_session_id})[/dim]")
                     
-                    # Emit execution_started event
-                    await dashboard_client.emit_event('execution_started', {
+                    # Emit execution:started event (colon-separated)
+                    await dashboard_client.emit_event('execution:started', {
                         'task_name': task,
                         'session_id': generated_session_id,
                         'timestamp': datetime.now().isoformat()
@@ -187,13 +187,13 @@ def do_command(
             # Emit completion event before disconnect
             if dashboard_client:
                 if success:
-                    await dashboard_client.emit_event('execution_completed', {
+                    await dashboard_client.emit_event('execution:completed', {
                         'success': True,
                         'files_created': files,
                         'timestamp': datetime.now().isoformat()
                     })
                 else:
-                    await dashboard_client.emit_event('execution_failed', {
+                    await dashboard_client.emit_event('execution:failed', {
                         'success': False,
                         'timestamp': datetime.now().isoformat()
                     })

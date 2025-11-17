@@ -683,44 +683,37 @@ Execute this task with full project awareness."""
         msg: Any,
         dashboard_client: Any
     ) -> None:
-        """Stream message to dashboard for real-time updates with correct event types."""
+        """Stream message to dashboard with correct event types (colon-separated)."""
         from claude_agent_sdk import TextBlock, ToolUseBlock, ThinkingBlock, AssistantMessage
         
         try:
             if isinstance(msg, TextBlock):
-                # Map to execution_progress
-                await dashboard_client.emit_event('execution_progress', {
-                    'progress': 50,  # Approximate
+                # Map to execution:progress (colon not underscore)
+                await dashboard_client.emit_event('execution:progress', {
+                    'progress': 50,
                     'message': msg.text[:200]
                 })
             elif isinstance(msg, ToolUseBlock):
-                # Tool usage
                 if msg.name in ['Write', 'Edit', 'MultiEdit']:
-                    # File modification
+                    # File modification event (colon-separated)
                     file_path = msg.input.get('file_path', 'unknown')
-                    await dashboard_client.emit_event('file_modified', {
+                    await dashboard_client.emit_event('file:modified', {
                         'file_path': file_path,
                         'operation': msg.name,
                         'timestamp': datetime.now().isoformat()
                     })
                 elif msg.name == 'Skill':
-                    # Skill invocation
+                    # Skill invocation (colon-separated)
                     skill_name = msg.input.get('skill', 'unknown')
-                    await dashboard_client.emit_event('skill_started', {
+                    await dashboard_client.emit_event('skill:started', {
                         'skill_id': f"skill_{skill_name}_{int(time.time())}",
                         'skill_name': skill_name,
                         'timestamp': datetime.now().isoformat()
                     })
-                else:
-                    # Other tool use
-                    await dashboard_client.emit_event('tool_use', {
-                        'tool': msg.name,
-                        'timestamp': datetime.now().isoformat()
-                    })
             elif isinstance(msg, ThinkingBlock):
-                # Thinking mapped to progress
-                await dashboard_client.emit_event('execution_progress', {
-                    'progress': 25,  # Approximate
+                # Thinking = progress
+                await dashboard_client.emit_event('execution:progress', {
+                    'progress': 25,
                     'thinking': True
                 })
         except Exception as e:

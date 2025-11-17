@@ -438,6 +438,17 @@ export const useDashboardStore = create<DashboardStore>((set, get) => ({
         }
         break;
 
+      // Server connection events
+      case 'connected':
+        // Server connected, log but don't update execution state
+        console.log('Server connected:', data);
+        break;
+
+      case 'command:result':
+        // Command response from server, log but don't update UI
+        console.log('Command result:', data);
+        break;
+
       default:
         // Unknown event type - just log it
         console.log('Unknown event type:', type);
