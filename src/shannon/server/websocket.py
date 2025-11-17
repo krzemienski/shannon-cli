@@ -351,12 +351,15 @@ async def cli_event(sid: str, data: Dict[str, Any]):
             'data': {'skill_name': 'code_generation', ...}
         }
     """
+    print(f"[WebSocket] cli_event handler triggered! data={data}", flush=True)
+
     try:
         event_type = data.get('event_type')
         event_data = data.get('data', {})
         timestamp = data.get('timestamp', datetime.now().isoformat())
         session_id = data.get('session_id')
 
+        print(f"[WebSocket] Broadcasting {event_type} to all clients", flush=True)
         logger.info(f"CLI event received: {event_type} from session {session_id}")
 
         # Broadcast to ALL clients (dashboard may not have session_id)
@@ -366,9 +369,11 @@ async def cli_event(sid: str, data: Dict[str, Any]):
             'session_id': session_id
         })  # No room restriction - broadcast to all
 
-        logger.debug(f"Emitted {event_type} to session room: {session_id}")
+        print(f"[WebSocket] Broadcast complete", flush=True)
+        logger.info(f"Broadcast {event_type} to all clients")
 
     except Exception as e:
+        print(f"[WebSocket] ERROR: {e}", flush=True)
         logger.error(f"Error handling CLI event: {e}", exc_info=True)
 
 

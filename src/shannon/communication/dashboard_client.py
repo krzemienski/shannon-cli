@@ -90,22 +90,27 @@ class DashboardEventClient:
         """
         if not self.connected:
             logger.warning(f"Cannot emit event {event_type}: Not connected")
+            print(f"[DashboardClient] Cannot emit {event_type}: Not connected", flush=True)
             return False
 
         try:
             # Send event to server via 'cli_event' channel
-            await self.client.emit('cli_event', {
+            event_payload = {
                 'session_id': self.session_id,
                 'event_type': event_type,
                 'timestamp': datetime.now().isoformat(),
                 'data': data
-            })
+            }
 
-            logger.debug(f"Emitted event to dashboard: {event_type}")
+            print(f"[DashboardClient] Emitting cli_event: {event_type}", flush=True)
+            await self.client.emit('cli_event', event_payload)
+
+            logger.info(f"Emitted event to dashboard: {event_type}")  # Changed debug → info
             return True
 
         except Exception as e:
             logger.error(f"Failed to emit event {event_type}: {e}")
+            print(f"[DashboardClient] Error emitting {event_type}: {e}", flush=True)
             return False
 
     async def disconnect(self):
