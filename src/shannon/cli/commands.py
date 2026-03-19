@@ -3373,6 +3373,38 @@ def interactive(show_thinking: bool, no_partial: bool) -> None:
     run_interactive()
 
 
+@cli.command()
+@click.option('--project', '-p', type=click.Path(exists=True), help='Project path to auto-onboard')
+def tui(project: Optional[str]) -> None:
+    """Launch the TUI Agent Orchestration System.
+
+    Full-fledged terminal UI for multi-agent task orchestration with
+    real-time visualization, memory management, and functional validation.
+
+    \b
+    Features:
+        - Multi-agent task decomposition and parallel execution
+        - Real-time streaming agent output display
+        - Tiered memory and context management (L1-L4)
+        - Functional validation with browser, CLI, API, iOS validators
+        - Dynamic skill and plugin loading
+        - Session persistence and crash recovery
+        - Project onboarding for brownfield codebases
+
+    \b
+    Screens:
+        [D] Dashboard    [P] Prompt     [O] Onboard    [M] Memory
+        [V] Validation   [S] Settings   [L] Logs       [Q] Quit
+
+    \b
+    Examples:
+        shannon tui                          # Launch TUI
+        shannon tui --project ./my-app       # Launch with project auto-onboard
+    """
+    from shannon.tui.app import run_tui
+    run_tui(project_path=project)
+
+
 # Entry point for console script
 def main() -> None:
     """Main entry point for CLI."""

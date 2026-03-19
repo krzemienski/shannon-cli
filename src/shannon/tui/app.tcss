@@ -1,0 +1,356 @@
+/* Shannon TUI Agent Orchestration System - Textual CSS */
+
+/* Global styles */
+Screen {
+    background: $surface;
+}
+
+/* Header bar */
+#header-bar {
+    dock: top;
+    height: 3;
+    background: $primary;
+    color: $text;
+    text-style: bold;
+    content-align: center middle;
+    padding: 0 2;
+}
+
+/* Footer navigation */
+#footer-bar {
+    dock: bottom;
+    height: 3;
+    background: $primary-darken-2;
+    color: $text-muted;
+    padding: 0 2;
+}
+
+/* Dashboard screen */
+DashboardScreen {
+    layout: vertical;
+}
+
+.dashboard-section {
+    height: auto;
+    margin: 1 2;
+    padding: 1 2;
+    border: solid $primary;
+}
+
+.dashboard-section .title {
+    text-style: bold;
+    color: $accent;
+}
+
+.stat-bar {
+    height: 1;
+    margin: 0 1;
+}
+
+.stat-label {
+    width: 20;
+    color: $text-muted;
+}
+
+.stat-value {
+    color: $success;
+    text-style: bold;
+}
+
+/* Prompt input screen */
+PromptScreen {
+    layout: vertical;
+}
+
+#prompt-input {
+    height: 5;
+    margin: 1 2;
+    border: solid $accent;
+}
+
+.task-graph-panel {
+    height: 1fr;
+    margin: 1 2;
+    border: solid $primary;
+    overflow-y: auto;
+}
+
+.phase-group {
+    margin: 0 1;
+    padding: 1;
+    border: dashed $primary-lighten-2;
+}
+
+.phase-label {
+    text-style: bold;
+    color: $warning;
+}
+
+.task-node {
+    height: auto;
+    padding: 0 2;
+}
+
+.task-node.completed {
+    color: $success;
+}
+
+.task-node.running {
+    color: $warning;
+}
+
+.task-node.failed {
+    color: $error;
+}
+
+.task-node.pending {
+    color: $text-muted;
+}
+
+/* Execution live view screen */
+ExecutionScreen {
+    layout: horizontal;
+}
+
+#task-graph-sidebar {
+    width: 35;
+    border-right: solid $primary;
+    overflow-y: auto;
+    padding: 1;
+}
+
+#agent-output-panel {
+    width: 1fr;
+    padding: 1 2;
+    overflow-y: auto;
+}
+
+.agent-thought {
+    color: $accent;
+    margin: 0 0 0 2;
+}
+
+.agent-action {
+    color: $warning;
+    margin: 0 0 0 2;
+}
+
+.agent-text {
+    color: $text;
+    margin: 0 0 0 2;
+}
+
+.files-modified {
+    margin: 1 0;
+    color: $success;
+}
+
+/* Onboarding screen */
+OnboardingScreen {
+    layout: vertical;
+}
+
+.progress-section {
+    height: auto;
+    margin: 1 2;
+    padding: 1;
+    border: solid $primary;
+}
+
+.detection-panel {
+    height: auto;
+    margin: 1 2;
+    padding: 1;
+    border: solid $accent;
+}
+
+.findings-panel {
+    height: 1fr;
+    margin: 1 2;
+    padding: 1;
+    border: solid $primary;
+    overflow-y: auto;
+}
+
+/* Memory explorer screen */
+MemoryScreen {
+    layout: vertical;
+}
+
+#memory-search {
+    height: 3;
+    margin: 1 2;
+    border: solid $accent;
+}
+
+.memory-list {
+    height: 1fr;
+    margin: 1 2;
+    overflow-y: auto;
+}
+
+.memory-entry {
+    height: auto;
+    padding: 1 2;
+    margin: 0 0 1 0;
+    border: solid $primary;
+}
+
+.memory-entry.decision {
+    border: solid $accent;
+}
+
+.memory-entry.insight {
+    border: solid $success;
+}
+
+.memory-entry.error_pattern {
+    border: solid $error;
+}
+
+.context-bars {
+    height: auto;
+    margin: 1 2;
+    padding: 1;
+    border: solid $primary;
+}
+
+/* Validation dashboard screen */
+ValidationScreen {
+    layout: vertical;
+}
+
+.validator-result {
+    height: auto;
+    margin: 1 2;
+    padding: 1;
+    border: solid $primary;
+}
+
+.validator-result.passed {
+    border: solid $success;
+}
+
+.validator-result.failed {
+    border: solid $error;
+}
+
+.validation-step {
+    height: 1;
+    padding: 0 2;
+}
+
+.validation-step.pass {
+    color: $success;
+}
+
+.validation-step.fail {
+    color: $error;
+}
+
+.retry-history {
+    height: auto;
+    margin: 1 2;
+    padding: 1;
+    border: dashed $warning;
+}
+
+/* Settings screen */
+SettingsScreen {
+    layout: vertical;
+    overflow-y: auto;
+}
+
+.settings-section {
+    height: auto;
+    margin: 1 2;
+    padding: 1;
+    border: solid $primary;
+}
+
+.setting-row {
+    height: 1;
+    padding: 0 2;
+}
+
+.setting-label {
+    width: 40;
+    color: $text-muted;
+}
+
+.setting-value {
+    color: $text;
+}
+
+/* Log viewer screen */
+LogScreen {
+    layout: vertical;
+}
+
+.log-filters {
+    height: 3;
+    margin: 1 2;
+    padding: 0 1;
+}
+
+.log-list {
+    height: 1fr;
+    margin: 0 2;
+    overflow-y: auto;
+}
+
+.log-entry {
+    height: 1;
+}
+
+.log-entry .timestamp {
+    width: 12;
+    color: $text-muted;
+}
+
+.log-entry .source {
+    width: 8;
+    color: $accent;
+}
+
+.log-entry .message {
+    color: $text;
+}
+
+/* Common widgets */
+.status-indicator {
+    width: 3;
+}
+
+.status-indicator.ok {
+    color: $success;
+}
+
+.status-indicator.warn {
+    color: $warning;
+}
+
+.status-indicator.error {
+    color: $error;
+}
+
+ProgressBar {
+    height: 1;
+    margin: 0 1;
+}
+
+Button {
+    margin: 0 1;
+}
+
+Button.primary {
+    background: $primary;
+}
+
+Button.success {
+    background: $success;
+}
+
+Button.danger {
+    background: $error;
+}
