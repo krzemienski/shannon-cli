@@ -12,12 +12,15 @@ import asyncio
 import logging
 import re
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 from uuid import uuid4
 
 from shannon.communication.events import EventBus, EventType
 from shannon.tui.models import (
+    AgentConfig,
     AgentStatus,
+    MemoryType,
     ModelTier,
     ProjectInfo,
     TaskComplexity,
@@ -602,24 +605,40 @@ class OrchestrationEngine:
             try:
                 node.agent_status = AgentStatus.ACTIVE
 
-                # Load any skills required for this task type.
-                skills = await self._skill_loader.load_skills(node.task_type)
-                node.context["skills"] = skills
-
-                # Delegate to the agent adapter.
-                result = await self._agent_adapter.execute(
-                    agent_id=agent_id,
-                    task_node=node,
+                # Load any skills relevant for this task type.
+                skills = self._skill_loader.activate_skills(
+                    task_description=node.description or node.title,
                 )
+                node.context["skills"] = [s.name for s in skills]
 
-                # Store result in memory.
-                await self._memory_system.store(
-                    key=node.node_id,
-                    data={
-                        "agent_id": agent_id,
-                        "task_type": node.task_type.value,
-                        "result": result,
+                # Build skill directives for the agent prompt.
+                skill_directives = self._skill_loader.generate_skill_directives(skills)
+
+                # Delegate to the agent adapter (spawn then execute).
+                agent_config = AgentConfig(
+                    agent_id=agent_id,
+                    name=node.title,
+                    model_tier=node.model_tier,
+                    metadata={
+                        "task_description": node.description or node.title,
+                        "skill_directives": skill_directives,
                     },
+                )
+                agent_state = await self._agent_adapter.spawn_agent(
+                    config=agent_config,
+                    task_node=node,
+                    context_items=[],
+                )
+                agent_state = await self._agent_adapter.execute_agent(agent_state)
+                result = agent_state.result
+
+                # Store result in memory system.
+                self._memory_system.create_memory(
+                    memory_type=MemoryType.AGENT_OUTPUT,
+                    content=str(result),
+                    source_task=node.node_id,
+                    source_agent=agent_id,
+                    tags=[node.task_type.value],
                 )
 
                 # Mark completed.
@@ -707,10 +726,23 @@ class OrchestrationEngine:
 
         for node in impl_nodes:
             try:
-                validation_result = await self._validation_engine.validate(
-                    node_id=node.node_id,
-                    result=node.result,
+                # Create a lightweight validation plan for the node.
+                project_info = ProjectInfo(root_path=str(Path.cwd()))
+                plan = self._validation_engine.create_validation_plan(
+                    task_description=node.description or node.title,
+                    project_info=project_info,
+                    files_modified=[],
                 )
+                validation_run = await self._validation_engine.execute_validation(
+                    plan=plan,
+                    project_root=Path.cwd(),
+                )
+                validation_result = {
+                    "status": validation_run.status.value if hasattr(validation_run.status, 'value') else str(validation_run.status),
+                    "node_id": node.node_id,
+                    "steps_total": len(validation_run.steps),
+                    "steps_passed": sum(1 for s in validation_run.steps if s.status.value == "passed"),
+                }
                 node.context["validation"] = validation_result
 
                 await self._event_bus.emit(

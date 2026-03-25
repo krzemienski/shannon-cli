@@ -437,6 +437,7 @@ class MemoryType(Enum):
     REQUIREMENT = "requirement"
     CONVERSATION = "conversation"
     SESSION_NOTE = "session_note"
+    AGENT_OUTPUT = "agent_output"
 
 
 @dataclass

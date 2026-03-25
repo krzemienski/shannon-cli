@@ -193,7 +193,10 @@ class OrchestrationController:
     def adapter(self):
         if self._adapter is None:
             from shannon.tui.agent_adapter import AgentAdapter
-            self._adapter = AgentAdapter(event_bus=self.event_bus)
+            self._adapter = AgentAdapter(
+                model_registry=AgentAdapter.get_default_registry(),
+                event_bus=self.event_bus,
+            )
         return self._adapter
 
     @property
@@ -202,6 +205,7 @@ class OrchestrationController:
             from shannon.tui.memory_system import MemorySystem
             self._memory = MemorySystem(
                 session_id=self.state.session_id,
+                project_path=self.state.project_path,
                 event_bus=self.event_bus,
             )
         return self._memory
@@ -217,14 +221,24 @@ class OrchestrationController:
     def skills(self):
         if self._skills is None:
             from shannon.tui.skill_loader import SkillLoader
-            self._skills = SkillLoader()
+            project_root = Path(self.state.project_path) if self.state.project_path else Path.cwd()
+            skills_dir = project_root / ".claude" / "skills"
+            plugins_dir = project_root / ".claude" / "plugins"
+            self._skills = SkillLoader(
+                skills_dir=skills_dir,
+                plugins_dir=plugins_dir,
+            )
         return self._skills
 
     @property
     def scanner(self):
         if self._scanner is None:
             from shannon.tui.project_scanner import ProjectScanner
-            self._scanner = ProjectScanner(event_bus=self.event_bus)
+            project_root = Path(self.state.project_path) if self.state.project_path else Path.cwd()
+            self._scanner = ProjectScanner(
+                project_root=project_root,
+                event_bus=self.event_bus,
+            )
         return self._scanner
 
     # -- high-level actions ---------------------------------------------------
@@ -260,7 +274,16 @@ class OrchestrationController:
     async def onboard_project(self, project_path: str) -> ProjectInfo:
         """Scan and onboard a project."""
         self.state.add_log("ORCH", f"Onboarding project: {project_path}")
-        info = await self.scanner.scan(project_path)
+
+        # ProjectScanner uses project_root at construction time, so recreate
+        # the scanner with the correct root if it differs.
+        from shannon.tui.project_scanner import ProjectScanner
+        self._scanner = ProjectScanner(
+            project_root=Path(project_path),
+            event_bus=self.event_bus,
+        )
+
+        info = await self.scanner.scan()
         self.state.project_info = info
         self.state.project_path = project_path
         self.state.context_utilization["L3"] = 100.0
@@ -268,19 +291,18 @@ class OrchestrationController:
         return info
 
     async def search_memories(self, query: str) -> List[MemoryEntry]:
-        """Search memory system."""
-        return await self.memory.search(query)
+        """Search memory system (synchronous internally)."""
+        return self.memory.search_memories(query)
 
     async def create_memory(
         self, content: str, memory_type: MemoryType, tags: List[str]
     ) -> MemoryEntry:
         """Create a new memory entry."""
-        entry = MemoryEntry(
+        entry = self.memory.create_memory(
             memory_type=memory_type,
             content=content,
             tags=tags,
         )
-        await self.memory.store(entry)
         self.state.memories.append(entry)
         return entry
 
@@ -363,13 +385,16 @@ if TEXTUAL_AVAILABLE:
 
         def _install_screens(self) -> None:
             """Lazily install all screen instances."""
+            # Build a dict representation of AppState for screens that expect it.
+            app_state_dict = self._build_state_dict()
+
             try:
                 from shannon.tui.screens.dashboard import DashboardScreen, PromptScreen
                 self.install_screen(
-                    DashboardScreen(self.app_state, self.controller), name="dashboard"
+                    DashboardScreen(app_state_dict), name="dashboard"
                 )
                 self.install_screen(
-                    PromptScreen(self.app_state, self.controller), name="prompt"
+                    PromptScreen(app_state_dict), name="prompt"
                 )
             except ImportError:
                 logger.warning("Dashboard/Prompt screens not available")
@@ -377,10 +402,10 @@ if TEXTUAL_AVAILABLE:
             try:
                 from shannon.tui.screens.execution import ExecutionScreen, OnboardingScreen
                 self.install_screen(
-                    ExecutionScreen(self.app_state, self.controller), name="execution"
+                    ExecutionScreen(task_graph=self.app_state.current_graph), name="execution"
                 )
                 self.install_screen(
-                    OnboardingScreen(self.app_state, self.controller), name="onboarding"
+                    OnboardingScreen(), name="onboarding"
                 )
             except ImportError:
                 logger.warning("Execution/Onboarding screens not available")
@@ -393,19 +418,50 @@ if TEXTUAL_AVAILABLE:
                     LogScreen,
                 )
                 self.install_screen(
-                    MemoryScreen(self.app_state, self.controller), name="memory"
+                    MemoryScreen(
+                        memories=self.app_state.memories,
+                        context_utilization=self.app_state.context_utilization,
+                    ),
+                    name="memory",
                 )
                 self.install_screen(
-                    ValidationScreen(self.app_state, self.controller), name="validation"
+                    ValidationScreen(), name="validation"
                 )
                 self.install_screen(
-                    SettingsScreen(self.app_state, self.controller), name="settings"
+                    SettingsScreen(), name="settings"
                 )
                 self.install_screen(
-                    LogScreen(self.app_state, self.controller), name="logs"
+                    LogScreen(), name="logs"
                 )
             except ImportError:
                 logger.warning("Panel screens not available")
+
+        def _build_state_dict(self) -> Dict[str, Any]:
+            """Convert AppState into a dict for screens that expect Dict[str, Any]."""
+            s = self.app_state
+            return {
+                "session_id": s.session_id,
+                "session_start": s.session_start,
+                "project_info": s.project_info,
+                "project_path": s.project_path,
+                "current_graph": s.current_graph,
+                "task_history": s.task_history,
+                "active_agents": s.active_agents,
+                "focused_agent_id": s.focused_agent_id,
+                "memories": s.memories,
+                "context_utilization": s.context_utilization,
+                "active_skills": s.active_skills,
+                "active_plugins": s.active_plugins,
+                "total_skills": s.total_skills,
+                "total_plugins": s.total_plugins,
+                "models": s.models,
+                "max_parallel_agents": s.max_parallel_agents,
+                "max_validation_retries": s.max_validation_retries,
+                "auto_approve_writes": s.auto_approve_writes,
+                "validation_required": s.validation_required,
+                "log_entries": s.log_entries,
+                "validation_results": s.validation_results,
+            }
 
         def action_switch_screen(self, screen_name: str) -> None:
             """Switch to a named screen."""
